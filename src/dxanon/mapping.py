@@ -29,8 +29,13 @@ class Entry:
 
 
 class Mapping:
-    def __init__(self, entries: list[Entry] | None = None) -> None:
+    def __init__(self, entries: list[Entry] | None = None, used: set[str] | None = None) -> None:
         self.entries: list[Entry] = list(entries or [])
+        #: Real values that a substitution pass actually consumed. Empty
+        #: means "not recorded yet", not "none": a table loaded from an
+        #: older file has no record, and must not have its entries treated
+        #: as unused. See :meth:`was_used`.
+        self.used: set[str] = set(used or ())
 
     def add(self, real: str, pseudonym: str, kind: str = "name", note: str = "") -> Entry:
         if not real:
@@ -54,6 +59,19 @@ class Mapping:
 
     def backward(self) -> list[tuple[str, str]]:
         return _ordered((e.pseudonym, e.real) for e in self.entries)
+
+    def mark_used(self, reals: set[str]) -> None:
+        self.used |= {r for r in reals if r}
+
+    def was_used(self, entry: Entry) -> bool:
+        """True when the entry fired, or when nothing was recorded.
+
+        Defaulting to True keeps the return-trip check strict for tables
+        written before this was recorded: it may ask about a pseudonym
+        that never appeared, which is a visible, correctable nuisance,
+        where the opposite silently accepts a half-restored document.
+        """
+        return not self.used or entry.real in self.used
 
     def conflicts(self) -> list[str]:
         """Table entries that cannot coexist, in plain words.
@@ -97,7 +115,11 @@ class Mapping:
         return [e for e in self.entries if e.pseudonym and e.pseudonym in text]
 
     def save(self, path) -> None:
-        payload = {"schema": SCHEMA, "entries": [asdict(e) for e in self.entries]}
+        payload = {
+            "schema": SCHEMA,
+            "entries": [asdict(e) for e in self.entries],
+            "used": sorted(self.used),
+        }
         Path(path).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     @classmethod
@@ -105,7 +127,7 @@ class Mapping:
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
         if payload.get("schema") != SCHEMA:
             raise ValueError(f"unsupported mapping schema: {payload.get('schema')!r}")
-        return cls([Entry(**row) for row in payload["entries"]])
+        return cls([Entry(**row) for row in payload["entries"]], set(payload.get("used", ())))
 
 
 def _ordered(pairs) -> list[tuple[str, str]]:
@@ -153,10 +175,25 @@ def variants(name: str) -> list[str]:
 #: the masked text still reads like a legal document and the AI reasons on
 #: prose rather than on tokens such as [[PERS_01]]. Kept away from the very
 #: most frequent surnames, which are likely to be in the document already.
-FIRST_NAMES = (
-    "Marc", "Claire", "Olivier", "Hélène", "Damien", "Sabine", "Vincent",
-    "Nadia", "Fabrice", "Aurore", "Gilles", "Léa", "Bruno", "Margaux",
-    "Serge", "Camille", "Hugo", "Inès", "Patrick", "Agnès",
+#: Kept apart by grammatical gender so a pseudonym can follow the civility
+#: that precedes the real name. "Monsieur Claire FORESTIER" is not a leak,
+#: but it tells the reader the text has been through a machine, and a
+#: reader who stops trusting the text stops reasoning about it.
+FIRST_NAMES_M = (
+    "Marc", "Olivier", "Damien", "Vincent", "Fabrice", "Gilles", "Bruno",
+    "Serge", "Hugo", "Patrick", "Thibaut", "Romain", "Xavier", "Yann",
+)
+FIRST_NAMES_F = (
+    "Claire", "Hélène", "Sabine", "Nadia", "Aurore", "Léa", "Margaux",
+    "Camille", "Inès", "Agnès", "Delphine", "Maud", "Elsa", "Clarisse",
+)
+FIRST_NAMES = FIRST_NAMES_M + FIRST_NAMES_F
+
+#: Invented place names, so a town does not come back as a surname.
+PLACE_NAMES = (
+    "Valmont", "Beauvoir", "Fontenoy", "Rochefort-sur-Brède", "Saint-Avre",
+    "Cléry", "Montbrison-le-Haut", "Verneuil", "Aubrac-les-Bains", "Sénan",
+    "Chambeuil", "Pradines", "Villeneuve-d'Arce", "Lormont-le-Vieux",
 )
 SURNAMES = (
     "Lemoine", "Rivière", "Delacroix", "Vautrin", "Marsac", "Chevalier",
@@ -179,12 +216,15 @@ def propose(kind: str, taken: set[str], text: str = "") -> str:
     """
     if kind == "org":
         candidates = list(COMPANY_NAMES)
+    elif kind == "place":
+        candidates = list(PLACE_NAMES)
     else:
+        firsts = {"name_f": FIRST_NAMES_F, "name_m": FIRST_NAMES_M}.get(kind, FIRST_NAMES)
         # Step through both pools at once rather than nesting them, so the
         # grid does not fill with twenty people who all share a surname.
-        span = max(len(FIRST_NAMES), len(SURNAMES))
+        span = max(len(firsts), len(SURNAMES))
         candidates = [
-            f"{FIRST_NAMES[i % len(FIRST_NAMES)]} {SURNAMES[(i * 7) % len(SURNAMES)]}"
+            f"{firsts[i % len(firsts)]} {SURNAMES[(i * 7) % len(SURNAMES)]}"
             for i in range(span * len(SURNAMES))
         ]
 

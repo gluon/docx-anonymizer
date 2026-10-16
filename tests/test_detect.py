@@ -47,11 +47,29 @@ class CheckDigits(unittest.TestCase):
     def test_la_poste_is_the_documented_exception(self):
         self.assertTrue(detect.siren_is_valid("356000000"))
 
-    def test_a_number_that_is_not_one_is_not_reported(self):
+    def test_a_number_whose_key_fails_is_offered_not_asserted(self):
+        """A typo must not turn into a leak.
+
+        A social security number with one digit wrong still identifies its
+        holder. Discarding it because the arithmetic fails would leave it
+        in plain sight, so it drops to a candidate instead of vanishing.
+        """
         text = "La facture 123456789012345 et le dossier 999999999 sont joints."
-        kinds = {f.kind for f in detect.find(text)}
-        self.assertNotIn("nir", kinds)
-        self.assertNotIn("siren", kinds)
+        found = {f.kind: f for f in detect.find(text)}
+        for kind in found:
+            if kind in ("nir", "siren", "siret", "iban"):
+                self.assertEqual(found[kind].certainty, Certainty.CONFIRM)
+                self.assertIn("clé de contrôle", found[kind].why)
+
+    def test_a_valid_number_stays_certain(self):
+        found = {f.kind: f for f in detect.find(f"NIR {VALID_NIR}")}
+        self.assertEqual(found["nir"].certainty, Certainty.CERTAIN)
+
+    def test_a_mistyped_social_security_number_is_still_offered(self):
+        text = "numéro de sécurité sociale 1 78 03 13 055 123 42, demandeur"
+        found = {f.kind: f for f in detect.find(text)}
+        self.assertIn("nir", found)
+        self.assertEqual(found["nir"].value, "1 78 03 13 055 123 42")
 
 
 class FindsInText(unittest.TestCase):

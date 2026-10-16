@@ -149,6 +149,15 @@ CHECKED = (
     ("plate", PLATE, lambda m: True, "immatriculation"),
 )
 
+#: Formats carrying a check digit, and the words to describe them when it
+#: does not hold.
+_KEYED = {
+    "nir": "numéro de sécurité sociale",
+    "iban": "IBAN",
+    "siret": "SIRET",
+    "siren": "SIREN",
+}
+
 #: Same certainty tier, but the value is a capture group rather than the
 #: whole match: "né le 12 mars 1978" reports the date, not the verb.
 CHECKED_GROUPS = (
@@ -187,7 +196,11 @@ ELISION = re.compile(r"^[A-ZÀ-Ý]['’]")
 #: Hyphenated names read as one token: Aix-en-Provence, Jean-Pierre,
 #: Sainte-Marie. Splitting them produced half-names in the grid.
 WORD = r"[A-ZÀ-Ý][\wà-ÿ]*(?:[-'’][\w\wà-ÿ][\wà-ÿ]*)*"
-ALL_CAPS = re.compile(r"\b[A-ZÀ-Ý][A-ZÀ-Ý]{1,}(?:[-'’][A-ZÀ-Ý]+)*\b")
+#: Runs of capitalised words read as one token. Acts write party names in
+#: capitals, often two or three words long: taking "MECANIQUE PROVENCALE"
+#: as two findings produced half-names in the grid and a table entry for
+#: "MECANIQUE" that never matched anything on its own.
+ALL_CAPS = re.compile(r"\b[A-ZÀ-Ý][A-ZÀ-Ý]{1,}(?:[-'’][A-ZÀ-Ý]+)*(?:\s+[A-ZÀ-Ý][A-ZÀ-Ý'’\-]+)*\b")
 CAPITALISED = re.compile(r"\b[A-ZÀ-Ý][a-zà-ÿ]+(?:[-'’](?:[A-ZÀ-Ý]|[a-zà-ÿ])[a-zà-ÿ]*)*\b")
 
 #: Closed vocabulary of the field. A capitalised word in here is not a name.
@@ -351,6 +364,30 @@ def _is_excluded(word: str) -> bool:
     return bool(ROMAN.match(word)) or _fold(word).upper() in _EXCLUDED
 
 
+def _trim_excluded(word: str, start: int) -> tuple[str, int]:
+    """Drop excluded words from the edges of a multi-word capitalised run.
+
+    ``PLAISE AU CONSEIL DE PRUD'HOMMES DE MARSEILLE`` is one run of
+    capitals, but only the last word is a name. Trimming from both ends
+    keeps the useful middle without splitting genuine two-word names.
+    """
+    words = word.split()
+    if len(words) < 2:
+        return word, start
+
+    leading = 0
+    while leading < len(words) and _is_excluded(words[leading]):
+        leading += 1
+    trailing = len(words)
+    while trailing > leading and _is_excluded(words[trailing - 1]):
+        trailing -= 1
+
+    if leading >= trailing:
+        return "", start
+    offset = len(" ".join(words[:leading])) + (1 if leading else 0)
+    return " ".join(words[leading:trailing]), start + offset
+
+
 def find(text: str, known: list[str] | None = None) -> list[Finding]:
     """Everything worth showing the user, in document order, de-overlapped."""
     zones = case_law_zones(text)
@@ -359,7 +396,18 @@ def find(text: str, known: list[str] | None = None) -> list[Finding]:
     for kind, pattern, check, why in CHECKED:
         for match in pattern.finditer(text):
             if check(match):
-                findings.append(Finding(match.group(0), match.start(), match.end(), kind, Certainty.CERTAIN, why))
+                findings.append(Finding(match.group(0), match.start(), match.end(),
+                                        kind, Certainty.CERTAIN, why))
+            elif kind in _KEYED:
+                # Right shape, wrong check digit. Almost always a typo in
+                # the document, and the number identifies its holder just
+                # as well as a correct one would. Dropping it silently
+                # would leave a social security number in plain sight, so
+                # it is offered rather than discarded.
+                findings.append(Finding(
+                    match.group(0), match.start(), match.end(), kind, Certainty.CONFIRM,
+                    f"format d'un {_KEYED[kind]}, mais la clé de contrôle ne tombe pas juste",
+                ))
 
     for kind, pattern, why in CHECKED_GROUPS:
         for match in pattern.finditer(text):
@@ -389,7 +437,8 @@ def find(text: str, known: list[str] | None = None) -> list[Finding]:
                 word = word[2:]
                 if not word or not word[0].isupper():
                     continue
-            if _is_excluded(word):
+            word, start = _trim_excluded(word, start)
+            if not word or _is_excluded(word):
                 continue
             certainty = Certainty.CASE_LAW if _in_zone(start, match.end(), zones) else Certainty.CONFIRM
             why = ("partie à une décision citée" if certainty is Certainty.CASE_LAW
@@ -413,10 +462,14 @@ def _deduplicate(findings: list[Finding]) -> list[Finding]:
     return kept
 
 
-def group(findings: list[Finding]) -> list[tuple[str, Certainty, str, int]]:
+def group(findings: list[Finding]) -> list[tuple[str, Certainty, str, int, str]]:
     """One row per distinct value: a name seen 200 times is one decision.
 
-    Returned as (value, certainty, why, occurrences), most certain first.
+    Returned as (value, certainty, why, occurrences, kind), most certain
+    first. The kind travels with the row because certainty alone cannot
+    say what a value *is*: a social security number whose check digit
+    fails drops to "confirm", and a row that only knows its certainty
+    would hand it a person's name instead of a placeholder.
 
     A row is marked "keep as case law" only when *every* occurrence of the
     value sits inside a citation. One appearance in ordinary text and the
@@ -432,8 +485,22 @@ def group(findings: list[Finding]) -> list[tuple[str, Certainty, str, int]]:
     for value, items in rows.items():
         certainty = _row_certainty(items)
         why = next((f.why for f in items if f.certainty is certainty), items[0].why)
-        summary.append((value, certainty, why, len(items)))
+        summary.append((value, certainty, why, len(items), _row_kind(items)))
     return sorted(summary, key=lambda row: (_RANK[row[1]], -row[3], row[0]))
+
+
+#: Kinds that name a datum rather than a person or an organisation.
+IDENTIFIER_KINDS = frozenset(
+    {"nir", "iban", "siret", "siren", "email", "phone", "plate", "birth_date", "address"}
+)
+
+
+def _row_kind(items: list[Finding]) -> str:
+    """An identifier anywhere in the row makes the whole row an identifier."""
+    for finding in items:
+        if finding.kind in IDENTIFIER_KINDS:
+            return finding.kind
+    return items[0].kind
 
 
 def _row_certainty(items: list[Finding]) -> Certainty:
