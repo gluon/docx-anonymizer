@@ -40,6 +40,8 @@ class Residue:
 class Report:
     replacements: int = 0
     parts_changed: list[str] = field(default_factory=list)
+    #: Real values a substitution pass actually consumed.
+    used: set[str] = field(default_factory=set)
     images: list[str] = field(default_factory=list)
     unresolved: list[str] = field(default_factory=list)
 
@@ -48,6 +50,11 @@ def anonymize(source, destination, mapping: Mapping) -> Report:
     package = Package.open(source)
     report = _substitute(package, mapping.forward())
     report.images = [p.name for p in package.images()]
+    # Record which entries actually fired, as the pasted-text mode does.
+    # Without it the return trip refuses a perfectly good document over a
+    # pseudonym it never wrote: an entry can legitimately never apply, a
+    # short form living only inside a longer one that is replaced first.
+    mapping.mark_used(report.used)
 
     residues = scan(package, [e.real for e in mapping.entries])
     if residues:
@@ -102,11 +109,11 @@ def _substitute(package: Package, pairs: list[tuple[str, str]]) -> Report:
             continue
 
         count = 0
-        count += _substitute_runs(root, pairs)
-        count += _substitute_attributes(root, pairs)
-        count += _substitute_fields(root, pairs)
-        count += _substitute_instructions(root, pairs)
-        count += _substitute_relationships(root, pairs)
+        count += _substitute_runs(root, pairs, report.used)
+        count += _substitute_attributes(root, pairs, report.used)
+        count += _substitute_fields(root, pairs, report.used)
+        count += _substitute_instructions(root, pairs, report.used)
+        count += _substitute_relationships(root, pairs, report.used)
 
         if count:
             part.data = textmap.serialize(root, part.data)
@@ -117,17 +124,18 @@ def _substitute(package: Package, pairs: list[tuple[str, str]]) -> Report:
     return report
 
 
-def _substitute_runs(root, pairs: list[tuple[str, str]]) -> int:
+def _substitute_runs(root, pairs: list[tuple[str, str]], used: set[str]) -> int:
     count = 0
     for paragraph in textmap.paragraphs(root):
         edits = _find(paragraph.text, pairs)
         if edits:
+            used |= {paragraph.text[e.start:e.end] for e in edits}
             paragraph.apply(edits)
             count += len(edits)
     return count
 
 
-def _substitute_attributes(root, pairs: list[tuple[str, str]]) -> int:
+def _substitute_attributes(root, pairs: list[tuple[str, str]], used: set[str]) -> int:
     """Authors and initials on comments and on every tracked change.
 
     A document reviewed in-house keeps the name of each reviewer attached
@@ -140,26 +148,26 @@ def _substitute_attributes(root, pairs: list[tuple[str, str]]) -> int:
             value = node.get(attribute)
             if not value:
                 continue
-            replaced = _replace_all(value, pairs)
+            replaced = _replace_all(value, pairs, used)
             if replaced != value:
                 node.set(attribute, replaced)
                 count += 1
     return count
 
 
-def _substitute_fields(root, pairs: list[tuple[str, str]]) -> int:
+def _substitute_fields(root, pairs: list[tuple[str, str]], used: set[str]) -> int:
     count = 0
     for node in root.iter():
         if node.tag not in PROPERTY_FIELDS or not node.text:
             continue
-        replaced = _replace_all(node.text, pairs)
+        replaced = _replace_all(node.text, pairs, used)
         if replaced != node.text:
             node.text = replaced
             count += 1
     return count
 
 
-def _substitute_instructions(root, pairs: list[tuple[str, str]]) -> int:
+def _substitute_instructions(root, pairs: list[tuple[str, str]], used: set[str]) -> int:
     """Field codes: MERGEFIELD, HYPERLINK, AUTHOR and friends.
 
     ``<w:instrText>`` holds the code rather than the rendered result, so it
@@ -169,21 +177,21 @@ def _substitute_instructions(root, pairs: list[tuple[str, str]]) -> int:
     for node in root.iter(INSTR_TEXT):
         if not node.text:
             continue
-        replaced = _replace_all(node.text, pairs)
+        replaced = _replace_all(node.text, pairs, used)
         if replaced != node.text:
             node.text = replaced
             count += 1
     return count
 
 
-def _substitute_relationships(root, pairs: list[tuple[str, str]]) -> int:
+def _substitute_relationships(root, pairs: list[tuple[str, str]], used: set[str]) -> int:
     """Relationship targets: a ``mailto:`` link carries a full address."""
     count = 0
     for node in root.iter(RELATIONSHIP):
         target = node.get("Target")
         if not target:
             continue
-        replaced = _replace_all(target, pairs)
+        replaced = _replace_all(target, pairs, used)
         if replaced != target:
             node.set("Target", replaced)
             count += 1
@@ -204,7 +212,7 @@ def _find(text: str, pairs: list[tuple[str, str]]) -> list[textmap.Edit]:
     return edits
 
 
-def _replace_all(value: str, pairs: list[tuple[str, str]]) -> str:
+def _replace_all(value: str, pairs: list[tuple[str, str]], used: set[str] | None = None) -> str:
     """One left-to-right pass, so a replacement is never replaced again.
 
     Chaining ``str.replace`` over the pairs lets an earlier substitution's
@@ -222,6 +230,8 @@ def _replace_all(value: str, pairs: list[tuple[str, str]]) -> str:
         for source, target in pairs:  # longest source first, see Mapping
             if source and value.startswith(source, index):
                 out.append(target)
+                if used is not None:
+                    used.add(source)
                 index += len(source)
                 break
         else:

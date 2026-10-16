@@ -3,12 +3,14 @@ name: ci
 on:
   push:
     branches: ["**"]
+    tags: ["v*"]
   pull_request:
 
 jobs:
   tests:
     # The engine is pure Python, but the product ships on Windows, so the
-    # suite runs there too: path handling and default encodings differ.
+    # suite runs there too: path handling and default encodings differ,
+    # and both have broken this kind of code before.
     strategy:
       fail-fast: false
       matrix:
@@ -20,6 +22,61 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e .
-      - run: python -m unittest discover -s tests -v
+      - name: Tests
+        run: python -m unittest discover -s tests -v
         env:
           PYTHONPATH: src${{ matrix.os == 'windows-latest' && ';' || ':' }}tests
+
+  window:
+    # The window is never shown by the suite, so at least prove it imports
+    # against a real PySide6 rather than only parsing.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e . PySide6
+      - name: Import the window
+        run: python -c "import dxanon.gui; print('gui imports against PySide6', dxanon.gui.Window.__name__)"
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+  build:
+    needs: [tests, window]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e . PySide6 pyinstaller
+      - name: Build the executable
+        run: >
+          pyinstaller --noconfirm --onefile --windowed
+          --name Anonymiseur
+          --paths src
+          --collect-submodules dxanon
+          --hidden-import lxml._elementpath
+          src/dxanon/__main__.py
+
+      - name: Check the executable starts
+        # Not a functional test: it proves the bundle is complete, which is
+        # where one-file builds usually fail (a missing hidden import shows
+        # up only at runtime, on the user's machine).
+        run: |
+          $process = Start-Process -FilePath dist\Anonymiseur.exe -ArgumentList '--self-check' -PassThru -Wait
+          if ($process.ExitCode -ne 0) { throw "the executable exited with $($process.ExitCode)" }
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Anonymiseur-windows
+          path: dist/Anonymiseur.exe
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Anonymiseur.exe

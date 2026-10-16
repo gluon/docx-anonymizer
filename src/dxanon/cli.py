@@ -34,6 +34,10 @@ def main(argv: list[str] | None = None) -> int:
         help="accept a document where some pseudonyms never came back",
     )
 
+    scan = sub.add_parser("scan", help="show what would be masked, and decide nothing")
+    scan.add_argument("source", type=Path, help="a .docx or a .txt")
+    scan.add_argument("--mapping", type=Path, help="write the proposed table here")
+
     add = sub.add_parser("add", help="declare one real value and its pseudonym")
     add.add_argument("--mapping", type=Path, required=True)
     add.add_argument("real")
@@ -49,7 +53,46 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "add":
         return _add(args)
+    if args.command == "scan":
+        return _scan(args)
     return _convert(args)
+
+
+def _scan(args) -> int:
+    from . import workflow
+    from .workflow import Decision
+
+    text, images = _read_any(args.source)
+    grid = workflow.build(text, images=images)
+
+    width = max((len(r.value) for r in grid.rows), default=10)
+    for row in grid.rows:
+        mark = "masquer " if row.decision is Decision.REPLACE else "conserver"
+        arrow = f" -> {row.pseudonym}" if row.pseudonym else ""
+        print(f"  [{mark}] {row.value:<{width}}  x{row.occurrences:<3d}{arrow}")
+        print(f"             {row.why}")
+
+    print(f"\n{len(grid.rows)} ligne(s) à trancher")
+    for name in grid.images:
+        print(f"  IMAGE NON TRAITÉE : {name} (le texte qu'elle contient n'est pas lu)")
+    for problem in grid.conflicts():
+        print(f"  CONFLIT : {problem}")
+
+    if args.mapping:
+        grid.to_mapping().save(args.mapping)
+        print(f"\nTable proposée écrite dans {args.mapping}. Relisez-la avant de l'utiliser.")
+    return 0
+
+
+def _read_any(path: Path) -> tuple[str, list[str]]:
+    if path.suffix.lower() != ".docx":
+        return path.read_text(encoding="utf-8"), []
+    from . import textmap
+    from .package import Package
+
+    package = Package.open(path)
+    chunks = [textmap.full_text(textmap.parse(p.data)) for p in package.stories()]
+    return "\n".join(c for c in chunks if c), [p.name for p in package.images()]
 
 
 def _add(args) -> int:

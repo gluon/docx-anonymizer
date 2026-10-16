@@ -201,7 +201,11 @@ WORD = r"[A-ZÀ-Ý][\wà-ÿ]*(?:[-'’][\w\wà-ÿ][\wà-ÿ]*)*"
 #: as two findings produced half-names in the grid and a table entry for
 #: "MECANIQUE" that never matched anything on its own.
 ALL_CAPS = re.compile(r"\b[A-ZÀ-Ý][A-ZÀ-Ý]{1,}(?:[-'’][A-ZÀ-Ý]+)*(?:\s+[A-ZÀ-Ý][A-ZÀ-Ý'’\-]+)*\b")
-CAPITALISED = re.compile(r"\b[A-ZÀ-Ý][a-zà-ÿ]+(?:[-'’](?:[A-ZÀ-Ý]|[a-zà-ÿ])[a-zà-ÿ]*)*\b")
+#: Runs of title-case words read as one token too, for the same reason as
+#: ALL_CAPS: "Mecanique Provencale" appearing without its company form in
+#: a header produced three separate rows and three unrelated pseudonyms.
+_TITLE_WORD = r"[A-ZÀ-Ý][a-zà-ÿ]+(?:[-'’](?:[A-ZÀ-Ý]|[a-zà-ÿ])[a-zà-ÿ]*)*"
+CAPITALISED = re.compile(rf"\b{_TITLE_WORD}(?:\s+{_TITLE_WORD})*\b")
 
 #: Closed vocabulary of the field. A capitalised word in here is not a name.
 LEGAL_LEXICON = frozenset(
@@ -260,6 +264,7 @@ DOCUMENT_FURNITURE = frozenset(
     Ancien Ancienne Nouveau Nouvelle Present Présent Presente Présente
     Premier Première Second Seconde Troisieme Troisième
     Brut Net Mensuel Annuel Horaire Total Montant Somme Solde
+    Contact Contacts Verifier Vérifier Voir Noter Confirmer Relire Rappel
     Cass Civ Soc Crim Com Bull Dalloz JCP AJDA RJS Gaz Pal CJUE CEDH
     TGI RG CA CE TJ Pourvoi Arret Arrêt Attendu Juris Jurisprudence
     SAS SASU SARL EURL SA SCI SNC SCOP SCP SELARL GIE Societe Société Ste Sté

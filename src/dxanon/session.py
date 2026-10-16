@@ -36,6 +36,9 @@ class Session:
     mapping: Mapping = field(default_factory=Mapping)
     source_name: str = ""
 
+    def entries_count(self) -> int:
+        return len(self.mapping.entries)
+
     # ---------------------------------------------------------------- paths
     @property
     def mapping_path(self) -> Path:
