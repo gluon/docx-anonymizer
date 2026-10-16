@@ -12,6 +12,20 @@ from __future__ import annotations
 import sys
 
 
+def say(message: str, error: bool = False) -> None:
+    """Print without assuming there is anywhere to print to.
+
+    A PyInstaller ``--windowed`` build has no console: ``sys.stdout`` and
+    ``sys.stderr`` are None, and a bare ``print`` raises AttributeError.
+    The self-check would then fail for the one reason it is not meant to
+    test, and the exit code would say the bundle is broken when it is
+    fine.
+    """
+    stream = sys.stderr if error else sys.stdout
+    if stream is not None:
+        print(message, file=stream)
+
+
 def self_check() -> int:
     """Exercise every layer the bundle needs, then say so."""
     import tempfile
@@ -30,13 +44,13 @@ def self_check() -> int:
     restored, missing = plaintext.deanonymize(masked, mapping)
 
     if restored != text:
-        print("ÉCHEC : le texte restauré diffère de l'original", file=sys.stderr)
+        say("ÉCHEC : le texte restauré diffère de l'original", error=True)
         return 1
     if "DUPONT" in masked:
-        print("ÉCHEC : une valeur réelle subsiste dans le texte masqué", file=sys.stderr)
+        say("ÉCHEC : une valeur réelle subsiste dans le texte masqué", error=True)
         return 1
     if not guard.installed:
-        print("ÉCHEC : le garde-fou réseau n'est pas installé", file=sys.stderr)
+        say("ÉCHEC : le garde-fou réseau n'est pas installé", error=True)
         return 1
 
     with tempfile.TemporaryDirectory() as folder:
@@ -44,11 +58,11 @@ def self_check() -> int:
         session.mapping = Mapping(mapping.entries)
         session.save()
         if not Session.load(session.folder).entries_count():
-            print("ÉCHEC : la session ne se recharge pas", file=sys.stderr)
+            say("ÉCHEC : la session ne se recharge pas", error=True)
             return 1
 
-    print(f"OK : {len(grid.rows)} élément(s) détecté(s), aller-retour exact, "
-          f"garde-fou réseau actif, {len(missing)} pseudonyme(s) non restitué(s)")
+    say(f"OK : {len(grid.rows)} élément(s) détecté(s), aller-retour exact, "
+        f"garde-fou réseau actif, {len(missing)} pseudonyme(s) non restitué(s)")
     return 0
 
 

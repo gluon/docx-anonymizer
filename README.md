@@ -186,5 +186,21 @@ opening it. Until someone uses it on Windows, its behaviour is unverified.
 renders a produced file exactly as before has to be checked by opening
 one.
 
+**The Windows executable.** It has never been built or run. The build job
+exists and the bundle is checked by running `--self-check` against it,
+but that job is gated on a tag or a manual run, so until one happens
+nothing here proves the executable works.
+
 **The signed build.** The executable is unsigned, so Windows will warn on
 first launch. That needs a code-signing certificate, not a code change.
+
+## Running CI
+
+`tests` runs on every push, on Linux. The Windows job and the build cost
+several times as much per minute and run only on a `v*` tag or a manual
+dispatch:
+
+```
+gh workflow run ci -f full=true
+git tag v0.1.0 && git push origin v0.1.0   # builds and attaches the exe
+```

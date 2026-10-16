@@ -1,21 +1,23 @@
 name: ci
 
+# Minutes are finite, so the cheap job runs on every push and the
+# expensive ones only when they can tell you something new: a Windows
+# run and a build on a tag, or on demand.
 on:
   push:
     branches: ["**"]
     tags: ["v*"]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      full:
+        description: "Also run the Windows job and build the executable"
+        type: boolean
+        default: true
 
 jobs:
   tests:
-    # The engine is pure Python, but the product ships on Windows, so the
-    # suite runs there too: path handling and default encodings differ,
-    # and both have broken this kind of code before.
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -25,11 +27,14 @@ jobs:
       - name: Tests
         run: python -m unittest discover -s tests -v
         env:
-          PYTHONPATH: src${{ matrix.os == 'windows-latest' && ';' || ':' }}tests
+          PYTHONPATH: src:tests
 
-  window:
-    # The window is never shown by the suite, so at least prove it imports
-    # against a real PySide6 rather than only parsing.
+  windows:
+    # Windows minutes bill at twice the Linux rate, so this runs on tags
+    # and on demand rather than on every push. Path handling and default
+    # encodings differ there, and both have broken this kind of code.
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.full
+    needs: tests
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -37,13 +42,21 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e . PySide6
-      - name: Import the window
-        run: python -c "import dxanon.gui; print('gui imports against PySide6', dxanon.gui.Window.__name__)"
+      - name: Tests
+        run: python -m unittest discover -s tests -v
+        env:
+          PYTHONPATH: src;tests
+      - name: Import the window against a real PySide6
+        # The suite never shows the window, so this is the only thing
+        # standing between a typo in gui.py and a user double-clicking an
+        # executable that does nothing.
+        run: python -c "import dxanon.gui; print('ok', dxanon.gui.Window.__name__)"
         env:
           QT_QPA_PLATFORM: offscreen
 
   build:
-    needs: [tests, window]
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.full
+    needs: windows
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -61,14 +74,13 @@ jobs:
           src/dxanon/__main__.py
 
       - name: Check the executable starts
-        # Not a functional test: it proves the bundle is complete, which is
-        # where one-file builds usually fail (a missing hidden import shows
-        # up only at runtime, on the user's machine).
+        # Not a functional test: it proves the bundle is complete, which
+        # is where one-file builds fail. A missing hidden import shows up
+        # only at runtime, on the user's machine, as a window that never
+        # opens.
         run: |
-          $process = Start-Process -FilePath dist\Anonymiseur.exe -ArgumentList '--self-check' -PassThru -Wait
-          if ($process.ExitCode -ne 0) { throw "the executable exited with $($process.ExitCode)" }
-        env:
-          QT_QPA_PLATFORM: offscreen
+          $p = Start-Process -FilePath dist\Anonymiseur.exe -ArgumentList '--self-check' -PassThru -Wait
+          if ($p.ExitCode -ne 0) { throw "the executable exited with $($p.ExitCode)" }
 
       - uses: actions/upload-artifact@v4
         with:
