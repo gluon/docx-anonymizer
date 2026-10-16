@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Never commit a correspondence table or a real document.
+*.docx
+*.doc
+case*.json
+mapping*.json

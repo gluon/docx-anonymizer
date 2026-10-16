@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dxanon"
+version = "0.1.0"
+description = "Local, offline anonymiser for Word documents before submitting them to an AI"
+requires-python = ">=3.11"
+dependencies = ["lxml>=5.0"]
+
+[project.scripts]
+dxanon = "dxanon.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
