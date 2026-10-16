@@ -55,6 +55,39 @@ class Mapping:
     def backward(self) -> list[tuple[str, str]]:
         return _ordered((e.pseudonym, e.real) for e in self.entries)
 
+    def conflicts(self) -> list[str]:
+        """Table entries that cannot coexist, in plain words.
+
+        Two shapes break a round trip, and both are easy to create by hand:
+
+        * a pseudonym that contains another entry's real value, so the
+          masked text still shows something the table says to hide and the
+          refusal check fires on a value that was never the client's;
+        * a pseudonym that is also another entry's real value, so restoring
+          cannot tell which one was meant.
+
+        Caught when the table is built rather than at export, where the
+        symptom is confusing and the cause is three screens away.
+        """
+        problems: list[str] = []
+        reals = {e.real for e in self.entries if e.real}
+        for entry in self.entries:
+            if not entry.pseudonym:
+                continue
+            if entry.pseudonym in reals:
+                problems.append(
+                    f"« {entry.pseudonym} » est à la fois un pseudonyme et une vraie valeur"
+                )
+                continue
+            for real in reals:
+                if real != entry.real and real in entry.pseudonym:
+                    problems.append(
+                        f"le pseudonyme « {entry.pseudonym} » contient « {real} », "
+                        "qui doit être masqué"
+                    )
+                    break
+        return problems
+
     def collides_with(self, text: str) -> list[Entry]:
         """Pseudonyms that already occur in the source text.
 
@@ -114,6 +147,65 @@ def variants(name: str) -> list[str]:
             if value and value not in found:
                 found.append(value)
     return found
+
+
+#: Pools for generated pseudonyms. Deliberately ordinary French names, so
+#: the masked text still reads like a legal document and the AI reasons on
+#: prose rather than on tokens such as [[PERS_01]]. Kept away from the very
+#: most frequent surnames, which are likely to be in the document already.
+FIRST_NAMES = (
+    "Marc", "Claire", "Olivier", "Hélène", "Damien", "Sabine", "Vincent",
+    "Nadia", "Fabrice", "Aurore", "Gilles", "Léa", "Bruno", "Margaux",
+    "Serge", "Camille", "Hugo", "Inès", "Patrick", "Agnès",
+)
+SURNAMES = (
+    "Lemoine", "Rivière", "Delacroix", "Vautrin", "Marsac", "Chevalier",
+    "Aubert", "Forestier", "Lagarde", "Vasseur", "Montal", "Berthier",
+    "Esnault", "Grandjean", "Vanel", "Dupleix", "Soler", "Mercier",
+    "Nivelle", "Ferrand",
+)
+COMPANY_NAMES = (
+    "Orion", "Altaïr", "Vega", "Mistral", "Calypso", "Hélios", "Boréal",
+    "Zephyr", "Cassiopée", "Lyra", "Pollux", "Arcturus",
+)
+
+
+def propose(kind: str, taken: set[str], text: str = "") -> str:
+    """A pseudonym that collides with neither the table nor the document.
+
+    A name that already occurs in the source cannot be used: restoring it
+    would rewrite text that was never masked. So the document itself is
+    part of what the generator avoids, not only the table.
+    """
+    if kind == "org":
+        candidates = list(COMPANY_NAMES)
+    else:
+        # Step through both pools at once rather than nesting them, so the
+        # grid does not fill with twenty people who all share a surname.
+        span = max(len(FIRST_NAMES), len(SURNAMES))
+        candidates = [
+            f"{FIRST_NAMES[i % len(FIRST_NAMES)]} {SURNAMES[(i * 7) % len(SURNAMES)]}"
+            for i in range(span * len(SURNAMES))
+        ]
+
+    folded_text = _strip_accents(text).casefold()
+    folded_taken = {_strip_accents(t).casefold() for t in taken}
+
+    for suffix in ("", *(f" {n}" for n in range(2, 60))):
+        for candidate in candidates:
+            full = f"{candidate}{suffix}"
+            folded = _strip_accents(full).casefold()
+            if folded in folded_taken:
+                continue
+            # Accents and case are not a disguise: "Marc Rivière" collides
+            # with "Marc Riviere" in the source, and a pseudonym that is
+            # already in the document cannot be undone.
+            if folded_text and any(
+                _strip_accents(part).casefold() in folded_text for part in full.split()
+            ):
+                continue
+            return full
+    raise RuntimeError("no free pseudonym left, which should be impossible")
 
 
 def _strip_accents(value: str) -> str:

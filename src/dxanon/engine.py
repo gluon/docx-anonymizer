@@ -205,9 +205,29 @@ def _find(text: str, pairs: list[tuple[str, str]]) -> list[textmap.Edit]:
 
 
 def _replace_all(value: str, pairs: list[tuple[str, str]]) -> str:
-    for source, target in pairs:
-        value = value.replace(source, target)
-    return value
+    """One left-to-right pass, so a replacement is never replaced again.
+
+    Chaining ``str.replace`` over the pairs lets an earlier substitution's
+    output be matched by a later pair. With ``Jean Dupont -> Marc Lemoine``
+    and a second protagonist ``Marc -> Patrick``, the first name comes out
+    as ``Patrick Lemoine``: silently wrong, and no longer restorable,
+    because the table has no entry for what was actually written.
+    """
+    if not pairs:
+        return value
+
+    out: list[str] = []
+    index = 0
+    while index < len(value):
+        for source, target in pairs:  # longest source first, see Mapping
+            if source and value.startswith(source, index):
+                out.append(target)
+                index += len(source)
+                break
+        else:
+            out.append(value[index])
+            index += 1
+    return "".join(out)
 
 
 def scan(package: Package, values: list[str]) -> list[Residue]:
