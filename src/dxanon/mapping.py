@@ -201,6 +201,13 @@ SURNAMES = (
     "Esnault", "Grandjean", "Vanel", "Dupleix", "Soler", "Mercier",
     "Nivelle", "Ferrand",
 )
+#: Invented initialisms, so a bank or an agency stays an initialism.
+#: Checked against no real organisation on purpose: these are meant to be
+#: obviously not a real name to anyone who knows the field.
+ACRONYMS = (
+    "KVT", "ZRM", "QBX", "VNK", "XPF", "JHD", "WQL", "YTB", "FKZ", "PGV",
+)
+
 COMPANY_NAMES = (
     "Orion", "Altaïr", "Vega", "Mistral", "Calypso", "Hélios", "Boréal",
     "Zephyr", "Cassiopée", "Lyra", "Pollux", "Arcturus",
@@ -218,6 +225,8 @@ def propose(kind: str, taken: set[str], text: str = "") -> str:
         candidates = list(COMPANY_NAMES)
     elif kind == "place":
         candidates = list(PLACE_NAMES)
+    elif kind == "acronym":
+        candidates = list(ACRONYMS)
     else:
         firsts = {"name_f": FIRST_NAMES_F, "name_m": FIRST_NAMES_M}.get(kind, FIRST_NAMES)
         # Step through both pools at once rather than nesting them, so the

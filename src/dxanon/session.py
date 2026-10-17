@@ -101,6 +101,50 @@ class Session:
             source_name=payload.get("source_name", ""),
         )
 
+    def delete(self) -> list[Path]:
+        """Erase the session and everything it holds. Returns what went.
+
+        The correspondence table is the sensitive artefact of the whole
+        exercise: it is the one file that maps the pseudonyms back to the
+        client. When a case is done, it should be possible to remove it
+        without hunting for it.
+
+        What this does NOT claim: that the bytes are unrecoverable. On an
+        SSD, wear levelling means overwriting a file in place does not
+        reliably overwrite the blocks that held it, so a tool that
+        scrubbed before unlinking would be selling a guarantee it cannot
+        keep. This removes the files. Whole-disk encryption is what makes
+        the removal meaningful, and that is said plainly in the window.
+        """
+        removed: list[Path] = []
+        if not self.folder.exists():
+            return removed
+        for path in sorted(self.folder.rglob("*"), reverse=True):
+            if path.is_file():
+                path.unlink()
+                removed.append(path)
+            elif path.is_dir():
+                path.rmdir()
+        self.folder.rmdir()
+        removed.append(self.folder)
+        return removed
+
+    def outputs(self, beside: Path | None = None) -> list[Path]:
+        """Files this session produced that are still on disk.
+
+        Offered alongside deletion rather than deleted with it: an
+        anonymised copy may well have been sent somewhere and be worth
+        keeping, and guessing wrong in either direction is worse than
+        asking. Deleting the table without these leaves files nobody can
+        ever turn back, which the window says before it does it.
+        """
+        folder = beside or self.folder.parent
+        if not self.source_name:
+            return []
+        stem = Path(self.source_name).stem
+        found = [folder / f"{stem}_ANON.docx", folder / f"{stem}_FINAL.docx"]
+        return [path for path in found if path.exists()]
+
     @classmethod
     def recent(cls, parent, limit: int = 20) -> list["Session"]:
         """Sessions under ``parent``, newest first, skipping broken ones."""

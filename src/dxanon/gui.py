@@ -107,9 +107,14 @@ class Window(QMainWindow):
         layout.addWidget(_heading("Reprendre un travail en cours"))
         self.sessions_box = QComboBox()
         layout.addWidget(self.sessions_box)
+        session_buttons = QHBoxLayout()
         resume = QPushButton("Reprendre et remettre les vrais noms")
         resume.clicked.connect(self._resume)
-        layout.addWidget(resume)
+        forget = QPushButton("Supprimer définitivement")
+        forget.clicked.connect(self._forget)
+        session_buttons.addWidget(resume)
+        session_buttons.addWidget(forget)
+        layout.addLayout(session_buttons)
 
         self.paste_area = QPlainTextEdit()
         self.paste_area.setPlaceholderText("Collez ici le texte à anonymiser…")
@@ -270,10 +275,13 @@ class Window(QMainWindow):
         row = QHBoxLayout()
         copy = QPushButton("Copier")
         copy.clicked.connect(self._copy_result)
+        restart = QPushButton("Recommencer")
+        restart.clicked.connect(self._reset)
         done = QPushButton("J'ai la réponse de l'IA, remettre les vrais noms")
         done.setMinimumHeight(40)
         done.clicked.connect(lambda: self.stack.setCurrentIndex(3))
         row.addWidget(copy)
+        row.addWidget(restart)
         row.addStretch()
         row.addWidget(done)
         layout.addLayout(row)
@@ -415,6 +423,64 @@ class Window(QMainWindow):
         self.session = self.known_sessions[self.sessions_box.currentIndex()]
         self.workspace = self.session.folder.parent
         self.stack.setCurrentIndex(3)
+
+    # -------------------------------------------------------------- reset
+    def _reset(self) -> None:
+        """Start over without touching anything on disk."""
+        self.session = None
+        self.grid = None
+        self.source_text = ""
+        self.source_file = None
+        self.paste_area.clear()
+        self.paste_area.setVisible(False)
+        self.analyse_button.setVisible(False)
+        self.result_area.clear()
+        self.return_area.clear()
+        self.allow_partial.setChecked(False)
+        self.table.setRowCount(0)
+        self._refresh_sessions()
+        self.stack.setCurrentIndex(0)
+
+    def _forget(self) -> None:
+        selected = getattr(self, "known_sessions", None)
+        if not selected:
+            return
+        session = selected[self.sessions_box.currentIndex()]
+        outputs = session.outputs(self.workspace)
+
+        message = (
+            f"Supprimer définitivement « {session.label} » ?\n\n"
+            "La table de correspondance sera effacée. Les vrais noms de ce "
+            "cycle ne pourront plus être remis, ni par vous ni par personne."
+        )
+        if outputs:
+            message += "\n\nFichiers produits encore présents :\n" + "\n".join(
+                f"• {path.name}" for path in outputs
+            ) + "\n\nIls ne seront pas supprimés et deviendront définitivement illisibles."
+
+        confirm = QMessageBox(self)
+        confirm.setWindowTitle("Suppression définitive")
+        confirm.setText(message)
+        confirm.setIcon(QMessageBox.Warning)
+        confirm.setStandardButtons(QMessageBox.Cancel | QMessageBox.Yes)
+        confirm.setDefaultButton(QMessageBox.Cancel)
+        confirm.button(QMessageBox.Yes).setText("Supprimer")
+        confirm.button(QMessageBox.Cancel).setText("Annuler")
+        if confirm.exec() != QMessageBox.Yes:
+            return
+
+        removed = session.delete()
+        if self.session is not None and self.session.folder == session.folder:
+            self.session = None
+        self._reset()
+        QMessageBox.information(
+            self,
+            "Session supprimée",
+            f"{len(removed)} fichier(s) supprimé(s).\n\n"
+            "Les fichiers sont retirés du disque. Sur un SSD, cela ne garantit "
+            "pas que les blocs eux-mêmes soient écrasés : c'est le chiffrement "
+            "du disque qui rend cette suppression réellement définitive.",
+        )
 
 
 def _heading(text: str) -> QLabel:

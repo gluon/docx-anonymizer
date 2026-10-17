@@ -38,6 +38,13 @@ def main(argv: list[str] | None = None) -> int:
     scan.add_argument("source", type=Path, help="a .docx or a .txt")
     scan.add_argument("--mapping", type=Path, help="write the proposed table here")
 
+    sessions = sub.add_parser("sessions", help="list the sessions stored in a folder")
+    sessions.add_argument("folder", type=Path, nargs="?", default=Path.cwd())
+
+    forget = sub.add_parser("forget", help="erase a session and its correspondence table")
+    forget.add_argument("folder", type=Path, help="the .dxanon folder to erase")
+    forget.add_argument("--yes", action="store_true", help="do not ask for confirmation")
+
     add = sub.add_parser("add", help="declare one real value and its pseudonym")
     add.add_argument("--mapping", type=Path, required=True)
     add.add_argument("real")
@@ -55,7 +62,46 @@ def main(argv: list[str] | None = None) -> int:
         return _add(args)
     if args.command == "scan":
         return _scan(args)
+    if args.command == "sessions":
+        return _sessions(args)
+    if args.command == "forget":
+        return _forget(args)
     return _convert(args)
+
+
+def _sessions(args) -> int:
+    from .session import Session
+
+    found = Session.recent(args.folder)
+    for session in found:
+        print(f"  {session.created[:16]}  {session.label}")
+        print(f"      {session.folder}  ({len(session.mapping.entries)} entrée(s))")
+    if not found:
+        print(f"Aucune session dans {args.folder}")
+    return 0
+
+
+def _forget(args) -> int:
+    from .session import Session
+
+    session = Session.load(args.folder)
+    outputs = session.outputs()
+
+    if not args.yes:
+        print(f"Supprimer définitivement « {session.label} » ?")
+        print("La table de correspondance sera effacée. Les vrais noms de ce cycle")
+        print("ne pourront plus être remis, ni par vous ni par personne.")
+        for path in outputs:
+            print(f"  {path.name} restera sur le disque et deviendra illisible")
+        if input("Tapez SUPPRIMER pour confirmer : ").strip() != "SUPPRIMER":
+            print("Annulé, rien n'a été supprimé.")
+            return 1
+
+    removed = session.delete()
+    print(f"{len(removed)} fichier(s) supprimé(s).")
+    print("Sur un SSD, retirer un fichier n'écrase pas forcément les blocs qui le")
+    print("portaient. C'est le chiffrement du disque qui rend la suppression définitive.")
+    return 0
 
 
 def _scan(args) -> int:

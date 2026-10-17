@@ -65,12 +65,22 @@ surname with a cited party must not be shielded by it.
 Measured on a realistic two-page pleading (`tests/sample_conclusions.txt`)
 and pinned as a budget test:
 
-| | |
-| --- | --- |
-| Rows to arbitrate | 35 |
-| Identifiers found with certainty | 12 |
-| Cited parties correctly kept | 3 |
-| People or companies in the file that were missed | 0 |
+| | Conclusions, 2 pages | Mail thread, 1055 words |
+| --- | --- | --- |
+| Rows to arbitrate | 35 | 47 |
+| Identifiers found with certainty | 12 | 14 |
+| Cited parties correctly kept | 3 | 3 |
+| People or companies missed | 0 | 1 |
+
+The one miss is the stated blind spot: a surname written once in lower
+case mid-sentence. Both figures are pinned as budget tests, so a change
+to the lexicon or the patterns cannot quietly make the grid unusable in
+either direction.
+
+The mail thread was the harder document, and it is the one that found the
+real defects: a letter is mostly greeting and sign-off, a company is
+named in full once and in shorthand afterwards, and a signature block
+puts a town and a firm on consecutive lines.
 
 ## What the masked text reads like
 
@@ -142,6 +152,32 @@ than a determined attacker. The real guarantee is that the source is
 public and has no network code in it. The guard makes that absence
 visible to someone who cannot read the source. Loopback is allowed and
 counted separately, since it never leaves the machine.
+
+## Starting over, and erasing a cycle
+
+Two different things, deliberately separate.
+
+**Recommencer** clears the screen and forgets the session in memory.
+Nothing on disk is touched, so a cycle interrupted by a closed window can
+still be picked up from the list of recent sessions.
+
+**Supprimer définitivement** erases the session folder, the correspondence
+table included. After that the real names of that cycle cannot be put
+back, by anyone. Files the session produced are named but not deleted: an
+anonymised copy may have been sent somewhere, and guessing wrong either
+way is worse than asking. They become permanently unreadable, and the
+window says so before it does it.
+
+What erasing does **not** claim: that the bytes are unrecoverable. On an
+SSD, wear levelling means overwriting a file in place does not reliably
+overwrite the blocks that held it, so a tool that scrubbed before
+unlinking would be selling a guarantee it cannot keep. The files are
+removed; whole-disk encryption is what makes that removal meaningful.
+
+```
+dxanon sessions ~/Documents
+dxanon forget ~/Documents/Dupont-c-Orion.dxanon
+```
 
 ## Not covered, by design
 

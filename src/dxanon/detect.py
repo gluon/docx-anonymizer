@@ -68,7 +68,7 @@ BIRTH_DATE = re.compile(
 
 #: A French postcode with the town after it: the pair locates a person far
 #: more precisely than either half alone.
-POSTCODE_TOWN = re.compile(r"\b(\d{5}\s+[A-ZÀ-Ý][\wà-ÿ]+(?:[-\s][A-ZÀ-Ý]?[\wà-ÿ]+)*)")
+POSTCODE_TOWN = re.compile(r"\b(\d{5}[ \t]+[A-ZÀ-Ý][\wà-ÿ]+(?:[- \t][A-ZÀ-Ý]?[\wà-ÿ]+)*)")
 
 #: A street line: number, street type, name.
 STREET = re.compile(
@@ -200,12 +200,18 @@ WORD = r"[A-ZÀ-Ý][\wà-ÿ]*(?:[-'’][\w\wà-ÿ][\wà-ÿ]*)*"
 #: capitals, often two or three words long: taking "MECANIQUE PROVENCALE"
 #: as two findings produced half-names in the grid and a table entry for
 #: "MECANIQUE" that never matched anything on its own.
-ALL_CAPS = re.compile(r"\b[A-ZÀ-Ý][A-ZÀ-Ý]{1,}(?:[-'’][A-ZÀ-Ý]+)*(?:\s+[A-ZÀ-Ý][A-ZÀ-Ý'’\-]+)*\b")
+#: A run never crosses a line break. With ``\s+`` between words, a
+#: signature block read as one name: "Barreau de Marseille\nCabinet
+#: Moreau" came out as the single value "Marseille Cabinet Moreau".
+_GAP = r"[ \t]+"
+ALL_CAPS = re.compile(
+    rf"\b[A-ZÀ-Ý][A-ZÀ-Ý]{{1,}}(?:[-'’][A-ZÀ-Ý]+)*(?:{_GAP}[A-ZÀ-Ý][A-ZÀ-Ý'’\-]+)*\b"
+)
 #: Runs of title-case words read as one token too, for the same reason as
 #: ALL_CAPS: "Mecanique Provencale" appearing without its company form in
 #: a header produced three separate rows and three unrelated pseudonyms.
 _TITLE_WORD = r"[A-ZÀ-Ý][a-zà-ÿ]+(?:[-'’](?:[A-ZÀ-Ý]|[a-zà-ÿ])[a-zà-ÿ]*)*"
-CAPITALISED = re.compile(rf"\b{_TITLE_WORD}(?:\s+{_TITLE_WORD})*\b")
+CAPITALISED = re.compile(rf"\b{_TITLE_WORD}(?:{_GAP}{_TITLE_WORD})*\b")
 
 #: Closed vocabulary of the field. A capitalised word in here is not a name.
 LEGAL_LEXICON = frozenset(
@@ -268,6 +274,30 @@ DOCUMENT_FURNITURE = frozenset(
     Cass Civ Soc Crim Com Bull Dalloz JCP AJDA RJS Gaz Pal CJUE CEDH
     TGI RG CA CE TJ Pourvoi Arret Arrêt Attendu Juris Jurisprudence
     SAS SASU SARL EURL SA SCI SNC SCOP SCP SELARL GIE Societe Société Ste Sté
+    """.split()
+)
+
+#: The furniture of a letter. A mail is mostly greeting, thanks and
+#: sign-off, and every one of those words is capitalised: without this
+#: list a thousand-word exchange spent eight of its rows on "Merci",
+#: "Chère Consoeur" and the "RE" of its own subject line.
+CORRESPONDENCE = frozenset(
+    w.upper() for w in """
+    Cher Chère Chers Chères Bonjour Bonsoir Madame Monsieur Messieurs
+    Confrère Consoeur Consœur Confrères Consoeurs Consœurs Maitre Maître
+    Merci Remerciements Cordialement Confraternellement Sincèrement
+    Salutations Respectueusement Amicalement Bien Veuillez Agréer
+    Croire Expression Sentiments Considération Distinguée Distinguées
+    Dévoué Dévouée Sentiments Meilleures Excellente Réception Accusé
+    Dites Dites-moi Dis Dis-moi Rappelle Rappelle-moi Tiens Tiens-moi
+    Merci-beaucoup Pardon Désolé Desole Navré Navre
+    RE TR FW FWD REF Objet Sujet Copie Transfert Transféré Transfere
+    Pièce Pieces Jointe Jointes Attaché Attachee Ci-joint Ci-dessous
+    Un Deux Trois Quatre Cinq Six Sept Huit Neuf Dix Onze Douze
+    Premier Premièrement Deuxièmement Troisièmement Quatrièmement
+    Situation Question Questions Réponse Reponse Point Points Sujet
+    Associés Associes Partenaires Collaborateurs Confraternelle
+    Entretien Échange Echange Appel Téléphonique Telephonique Courrier
     """.split()
 )
 
@@ -354,7 +384,8 @@ def _fold(value: str) -> str:
 
 
 _EXCLUDED = frozenset(
-    _fold(w).upper() for w in (LEGAL_LEXICON | SENTENCE_OPENERS | DOCUMENT_FURNITURE)
+    _fold(w).upper()
+    for w in (LEGAL_LEXICON | SENTENCE_OPENERS | DOCUMENT_FURNITURE | CORRESPONDENCE)
 )
 
 
