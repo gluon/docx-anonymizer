@@ -128,5 +128,61 @@ class TheMail(unittest.TestCase):
         self.assertNotIn("benzaoui", self.rows)
 
 
+class TheRealCycle(unittest.TestCase):
+    """The round trip on a text the AI actually rewrote.
+
+    Every other round-trip test restores a document nobody touched,
+    which is the easy case. This one restores `sample_mail_reworked.txt`:
+    the masked mail after a genuine rework, restructured into sections,
+    895 words where there were 1030, most sentences rewritten. The
+    pseudonyms survived that rework, so the real names come back.
+
+    It also pins the leak. "priver benzaoui des trajets" is in the
+    source in lower case, was never offered in the grid, went out in the
+    masked copy, and comes back untouched: the tool neither masked it nor
+    corrupted it, and nothing anywhere lit up. That is the blind spot the
+    README states, observed end to end rather than argued.
+    """
+
+    REWORKED = Path(__file__).resolve().parent / "sample_mail_reworked.txt"
+
+    def setUp(self):
+        self.text = MAIL.read_text(encoding="utf-8")
+        self.reworked = self.REWORKED.read_text(encoding="utf-8")
+        self.mapping = workflow.build(self.text).to_mapping()
+
+    def test_the_reworked_text_restores(self):
+        restored, missing = plaintext.deanonymize(self.reworked, self.mapping)
+        self.assertEqual(missing, [])
+        for name in ("Rachid BENZAOUI", "Vandenbroucke", "Lahmar", "Vasseur",
+                     "TRANSPORTS FRIGORIFIQUES DU LITTORAL"):
+            self.assertIn(name, restored, name)
+
+    def test_the_rework_kept_every_pseudonym(self):
+        """What makes the restoration possible, checked on its own.
+
+        If this fails the fixture was edited carelessly, and the test
+        above would fail for a reason that has nothing to do with the
+        engine.
+        """
+        masked = plaintext.anonymize(self.text, self.mapping)
+        for entry in self.mapping.entries:
+            if entry.pseudonym in masked:
+                self.assertIn(entry.pseudonym, self.reworked, entry.pseudonym)
+
+    def test_the_leak_travelled_the_whole_way(self):
+        masked = plaintext.anonymize(self.text, self.mapping)
+        restored, _ = plaintext.deanonymize(self.reworked, self.mapping)
+
+        self.assertIn("benzaoui", self.text)
+        self.assertIn("benzaoui", masked, "the real name left in the masked copy")
+        self.assertIn("benzaoui", restored)
+
+    def test_the_cited_parties_came_back_untouched(self):
+        restored, _ = plaintext.deanonymize(self.reworked, self.mapping)
+        for party in ("Dufaure", "Lemarchand", "Bergeron Logistique"):
+            self.assertIn(party, restored, party)
+
+
 if __name__ == "__main__":
     unittest.main()
