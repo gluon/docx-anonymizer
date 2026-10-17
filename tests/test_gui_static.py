@@ -188,16 +188,25 @@ class LeavingTheHelp(unittest.TestCase):
     def setUp(self):
         self.source = GUI.read_text(encoding="utf-8")
 
-    def test_opening_the_help_twice_does_not_trap_the_user(self):
-        opener = self.source[self.source.index("def _open_help"):]
-        opener = opener[:opener.index("def _close_help")]
-        self.assertIn("!= HELP", opener, "no guard against recording the help itself")
+    def test_the_help_button_toggles(self):
+        """A second click on the button that opened it must close it.
 
-    def test_the_help_has_a_way_out(self):
-        self.assertIn("def _close_help", self.source)
-        self.assertGreaterEqual(
+        That is the only thing it can sensibly do while it stays on
+        screen, and it is what anyone tries first.
+        """
+        toggle = self.source[self.source.index("def _toggle_help"):]
+        toggle = toggle[:toggle.index("def _close_help")]
+        self.assertIn("== HELP", toggle, "the button does not close the help")
+        self.assertIn("_close_help()", toggle)
+
+    def test_escape_closes_the_help(self):
+        self.assertIn("Key_Escape", self.source)
+
+    def test_there_is_exactly_one_close_button_on_the_page(self):
+        """Two of them was treating the symptom, not the problem."""
+        self.assertEqual(
             self.source.count("clicked.connect(self._close_help)"), 1,
-            "nothing is wired to leave the help",
+            "more than one close button on the help page",
         )
 
 

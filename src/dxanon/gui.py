@@ -136,27 +136,41 @@ class Window(QMainWindow):
 
     # ------------------------------------------------------------- chrome
     def _build_status_bar(self) -> None:
-        help_button = QPushButton("Aide")
-        help_button.setFlat(True)
-        help_button.clicked.connect(self._open_help)
-        self.statusBar().addWidget(help_button)
+        self.help_button = QPushButton("Aide")
+        self.help_button.setFlat(True)
+        self.help_button.clicked.connect(self._toggle_help)
+        self.statusBar().addWidget(self.help_button)
 
         self.network_label = QLabel()
         self.network_label.setContentsMargins(8, 0, 8, 0)
         self.statusBar().addPermanentWidget(self.network_label)
         self._refresh_network_label()
 
-    def _open_help(self) -> None:
-        # Guard against recording the help page as the page to go back
-        # to: the button stays in the status bar while the help is open,
-        # so a second click made "Retour" return to the help itself and
-        # the page could not be left at all.
-        if self.stack.currentIndex() != HELP:
-            self._came_from = self.stack.currentIndex()
+    def _toggle_help(self) -> None:
+        """One button, one behaviour: it opens the help and it closes it.
+
+        The button stays in the status bar while the help is open, so
+        the only thing a second click can sensibly do is go back. An
+        earlier version recorded the current page on every click, which
+        recorded the help itself and left no way out; the fix was two
+        close buttons, which was treating the symptom.
+        """
+        if self.stack.currentIndex() == HELP:
+            self._close_help()
+            return
+        self._came_from = self.stack.currentIndex()
         self.stack.setCurrentIndex(HELP)
+        self.help_button.setText("Fermer l'aide")
 
     def _close_help(self) -> None:
         self.stack.setCurrentIndex(getattr(self, "_came_from", 0))
+        self.help_button.setText("Aide")
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 (Qt's own spelling)
+        if event.key() == Qt.Key_Escape and self.stack.currentIndex() == HELP:
+            self._close_help()
+            return
+        super().keyPressEvent(event)
 
     # --------------------------------------------------------------- help
     def _build_help(self) -> QWidget:
@@ -187,10 +201,6 @@ class Window(QMainWindow):
         body.setHtml(HELP_TEXT)
         outer.addWidget(body, stretch=1)
 
-        back = QPushButton("Fermer l'aide")
-        back.setMinimumHeight(40)
-        back.clicked.connect(self._close_help)
-        outer.addWidget(back)
         return page
 
     def _refresh_network_label(self) -> None:
