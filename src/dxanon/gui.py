@@ -147,8 +147,16 @@ class Window(QMainWindow):
         self._refresh_network_label()
 
     def _open_help(self) -> None:
-        self._came_from = self.stack.currentIndex()
+        # Guard against recording the help page as the page to go back
+        # to: the button stays in the status bar while the help is open,
+        # so a second click made "Retour" return to the help itself and
+        # the page could not be left at all.
+        if self.stack.currentIndex() != HELP:
+            self._came_from = self.stack.currentIndex()
         self.stack.setCurrentIndex(HELP)
+
+    def _close_help(self) -> None:
+        self.stack.setCurrentIndex(getattr(self, "_came_from", 0))
 
     # --------------------------------------------------------------- help
     def _build_help(self) -> QWidget:
@@ -164,17 +172,24 @@ class Window(QMainWindow):
         outer = QVBoxLayout(page)
         outer.setContentsMargins(28, 24, 28, 24)
 
+        header = QHBoxLayout()
         title = QLabel("Aide")
         title.setFont(QFont(self.font().family(), 17, QFont.Bold))
-        outer.addWidget(title)
+        close_top = QPushButton("Fermer")
+        close_top.clicked.connect(self._close_help)
+        header.addWidget(title)
+        header.addStretch()
+        header.addWidget(close_top)
+        outer.addLayout(header)
 
         body = QTextBrowser()
         body.setOpenExternalLinks(False)
         body.setHtml(HELP_TEXT)
         outer.addWidget(body, stretch=1)
 
-        back = QPushButton("Retour")
-        back.clicked.connect(lambda: self.stack.setCurrentIndex(getattr(self, "_came_from", 0)))
+        back = QPushButton("Fermer l'aide")
+        back.setMinimumHeight(40)
+        back.clicked.connect(self._close_help)
         outer.addWidget(back)
         return page
 

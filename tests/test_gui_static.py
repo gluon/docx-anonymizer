@@ -175,5 +175,31 @@ def _joined(node) -> str:
     return ""
 
 
+class LeavingTheHelp(unittest.TestCase):
+    """A page you cannot leave is worse than no page.
+
+    The help button sits in the status bar and stays there while the
+    help is open. Recording the current page on every click meant a
+    second click recorded the help itself, and "Retour" then returned to
+    the help: the user was stuck with no way out but closing the window,
+    which loses the cycle.
+    """
+
+    def setUp(self):
+        self.source = GUI.read_text(encoding="utf-8")
+
+    def test_opening_the_help_twice_does_not_trap_the_user(self):
+        opener = self.source[self.source.index("def _open_help"):]
+        opener = opener[:opener.index("def _close_help")]
+        self.assertIn("!= HELP", opener, "no guard against recording the help itself")
+
+    def test_the_help_has_a_way_out(self):
+        self.assertIn("def _close_help", self.source)
+        self.assertGreaterEqual(
+            self.source.count("clicked.connect(self._close_help)"), 1,
+            "nothing is wired to leave the help",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
