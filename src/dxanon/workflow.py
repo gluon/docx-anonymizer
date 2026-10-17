@@ -102,8 +102,37 @@ def build(
             decision=DEFAULTS[certainty], kind=kind)
         for value, certainty, why, count, kind in detect.group(detect.find(text, known=known))
     ]
+    rows.extend(_declared_but_unseen(rows, known or []))
     _assign(rows, text)
     return Grid(rows=rows, images=list(images or []))
+
+
+def _declared_but_unseen(rows: list[Row], known: list[str]) -> list[Row]:
+    """Rows for names the document carries but never prints.
+
+    A reviewer named only in a ``w:author`` attribute, or an author named
+    only in the file properties, appears nowhere in the body. Detection
+    reads the body, so it found nothing, the name never entered the
+    table, and the refusal check, which only looks for what the table
+    holds, had nothing to object to: the export went out with the name
+    in it.
+
+    Certain rather than candidates. Word does not put arbitrary words in
+    ``w:author``; it puts the name of a person, taken from the
+    installation the document was typed on.
+    """
+    seen = {row.value for row in rows}
+    extra: list[Row] = []
+    for value in known:
+        if value in seen:
+            continue
+        seen.add(value)
+        extra.append(Row(
+            value=value, certainty=Certainty.CERTAIN,
+            why="nom porté par le fichier lui-même, invisible dans le texte",
+            occurrences=0, decision=Decision.REPLACE, kind="author",
+        ))
+    return extra
 
 
 def _assign(rows: list[Row], text: str) -> None:

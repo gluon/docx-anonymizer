@@ -17,7 +17,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import plaintext, workflow
+from . import plaintext, source, workflow
 from .engine import RefusedExport, anonymize, deanonymize
 from .workflow import Decision
 
@@ -52,8 +52,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _scan(args) -> int:
-    text, images = _read_any(args.source)
-    grid = workflow.build(text, images=images)
+    text, images, known = _read_any(args.source)
+    grid = workflow.build(text, images=images, known=known)
 
     width = max((len(r.value) for r in grid.rows), default=10)
     for row in grid.rows:
@@ -78,8 +78,8 @@ def _mask(args) -> int:
     warning is there because the alternative is someone piping it into a
     file next to the document it unmasks.
     """
-    text, images = _read_any(args.source)
-    grid = workflow.build(text, images=images)
+    text, images, known = _read_any(args.source)
+    grid = workflow.build(text, images=images, known=known)
     mapping = grid.to_mapping()
 
     conflicts = grid.conflicts()
@@ -111,8 +111,8 @@ def _mask(args) -> int:
 
 def _roundtrip(args) -> int:
     """Mask and restore in one invocation, and say whether anything moved."""
-    text, images = _read_any(args.source)
-    mapping = workflow.build(text, images=images).to_mapping()
+    text, images, known = _read_any(args.source)
+    mapping = workflow.build(text, images=images, known=known).to_mapping()
     destination = args.destination or args.source.with_name(f"{args.source.stem}_ANON{args.source.suffix}")
 
     try:
@@ -137,15 +137,10 @@ def _roundtrip(args) -> int:
     return 0 if same else 1
 
 
-def _read_any(path: Path) -> tuple[str, list[str]]:
+def _read_any(path: Path) -> tuple[str, list[str], list[str]]:
     if path.suffix.lower() != ".docx":
-        return path.read_text(encoding="utf-8"), []
-    from . import textmap
-    from .package import Package
-
-    package = Package.open(path)
-    chunks = [textmap.full_text(textmap.parse(p.data)) for p in package.stories()]
-    return "\n".join(c for c in chunks if c), [p.name for p in package.images()]
+        return path.read_text(encoding="utf-8"), [], []
+    return source.read_document(path)
 
 
 if __name__ == "__main__":

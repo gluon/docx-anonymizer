@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import engine, plaintext, workflow
+from . import engine, plaintext, source, workflow
 from .detect import Certainty
 from .engine import RefusedExport
 from .mapping import Mapping
@@ -293,12 +293,12 @@ class Window(QMainWindow):
         self.source_file = Path(chosen)
         self.workspace = self.source_file.parent
         try:
-            text, images = _read_docx(self.source_file)
+            text, images, identities = source.read_document(self.source_file)
         except Exception as error:  # noqa: BLE001 - shown to the user as is
             QMessageBox.critical(self, "Lecture impossible", str(error))
             return
         self.source_text = text
-        self._open_grid(self.source_file.stem, images=images)
+        self._open_grid(self.source_file.stem, images=images, known=identities)
 
     def _analyse_text(self) -> None:
         text = self.paste_area.toPlainText().strip()
@@ -351,8 +351,9 @@ class Window(QMainWindow):
         layout.addLayout(row)
         return page
 
-    def _open_grid(self, label: str, images: list[str] | None = None) -> None:
-        self.grid = workflow.build(self.source_text, images=images)
+    def _open_grid(self, label: str, images: list[str] | None = None,
+                   known: list[str] | None = None) -> None:
+        self.grid = workflow.build(self.source_text, images=images, known=known)
         self.grid_heading.setText(f"{len(self.grid.rows)} élément(s) repéré(s) — {label}")
         self._fill_table()
         self.images_label.setText(
@@ -618,16 +619,6 @@ def _cell(text: str) -> QTableWidgetItem:
     item = QTableWidgetItem(text)
     item.setFlags(item.flags() & ~Qt.ItemIsEditable)
     return item
-
-
-def _read_docx(path: Path) -> tuple[str, list[str]]:
-    """Pull the text out of every story part, for detection only."""
-    from . import textmap
-    from .package import Package
-
-    package = Package.open(path)
-    chunks = [textmap.full_text(textmap.parse(part.data)) for part in package.stories()]
-    return "\n".join(chunk for chunk in chunks if chunk), [p.name for p in package.images()]
 
 
 def main() -> int:
