@@ -24,7 +24,6 @@ from enum import Enum
 
 from . import detect
 from .detect import Certainty
-from .lexicon import Lexicon
 from .mapping import Mapping, propose
 
 
@@ -96,7 +95,6 @@ def build(
     text: str,
     known: list[str] | None = None,
     images: list[str] | None = None,
-    lexicon: "Lexicon | None" = None,
 ) -> Grid:
     """Detect, group by person, and assign one pseudonym per person."""
     rows = [
@@ -104,27 +102,8 @@ def build(
             decision=DEFAULTS[certainty], kind=kind)
         for value, certainty, why, count, kind in detect.group(detect.find(text, known=known))
     ]
-    if lexicon is not None:
-        for row in rows:
-            # Only a decision to keep is remembered, and never for an
-            # identifier: not masking one IBAN says nothing about IBANs.
-            if row.is_person_like and lexicon.knows(row.value):
-                row.decision = Decision.KEEP
-                row.why = "vous avez déjà indiqué que ce n'est pas un nom"
     _assign(rows, text)
     return Grid(rows=rows, images=list(images or []))
-
-
-def remember_decisions(grid: Grid, lexicon: "Lexicon") -> None:
-    """Keep what the user said to leave alone, so it is not asked again."""
-    for row in grid.rows:
-        if not row.is_person_like or row.certainty is Certainty.CASE_LAW:
-            continue
-        if row.decision is Decision.KEEP:
-            lexicon.remember(row.value)
-        else:
-            # Masking it now overrides anything said before about it.
-            lexicon.forget(row.value)
 
 
 def _assign(rows: list[Row], text: str) -> None:

@@ -18,7 +18,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QHeaderView,
+    QApplication, QCheckBox, QFileDialog, QHBoxLayout, QHeaderView,
     QLabel, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QSizePolicy,
     QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
@@ -26,10 +26,8 @@ from PySide6.QtWidgets import (
 from . import engine, plaintext, workflow
 from .detect import Certainty
 from .engine import RefusedExport
-from .lexicon import Lexicon
 from .mapping import Mapping
 from .netguard import NetworkGuard
-from .session import Session
 from .workflow import Decision
 
 CERTAINTY_LABEL = {
@@ -43,12 +41,18 @@ class Window(QMainWindow):
     def __init__(self, guard: NetworkGuard) -> None:
         super().__init__()
         self.guard = guard
-        self.session: Session | None = None
         self.grid: workflow.Grid | None = None
         self.source_text = ""
         self.source_file: Path | None = None
         self.workspace = Path.home() / "Documents"
-        self.lexicon = Lexicon.load(Path.home() / ".anonymiseur-mots.txt")
+
+        #: The correspondence table, held in memory and nowhere else.
+        #: Writing it to disk would put the one file that maps every
+        #: pseudonym back to the client on the firm's disk, and would
+        #: then need a delete button to remove what should never have
+        #: been written. Closing the window loses the cycle, which is
+        #: said on screen rather than discovered.
+        self.mapping: Mapping | None = None
 
         self.setWindowTitle("Anonymiseur de documents")
         self.resize(1100, 740)
@@ -104,17 +108,13 @@ class Window(QMainWindow):
             buttons.addWidget(button)
         layout.addLayout(buttons)
 
-        layout.addWidget(_heading("Reprendre un travail en cours"))
-        self.sessions_box = QComboBox()
-        layout.addWidget(self.sessions_box)
-        session_buttons = QHBoxLayout()
-        resume = QPushButton("Reprendre et remettre les vrais noms")
-        resume.clicked.connect(self._resume)
-        forget = QPushButton("Supprimer définitivement")
-        forget.clicked.connect(self._forget)
-        session_buttons.addWidget(resume)
-        session_buttons.addWidget(forget)
-        layout.addLayout(session_buttons)
+        self.cycle_label = QLabel()
+        self.cycle_label.setWordWrap(True)
+        layout.addWidget(self.cycle_label)
+
+        self.resume_button = QPushButton("Reprendre, et remettre les vrais noms")
+        self.resume_button.clicked.connect(lambda: self.stack.setCurrentIndex(3))
+        layout.addWidget(self.resume_button)
 
         self.paste_area = QPlainTextEdit()
         self.paste_area.setPlaceholderText("Collez ici le texte à anonymiser…")
@@ -127,16 +127,34 @@ class Window(QMainWindow):
         layout.addWidget(self.analyse_button)
 
         layout.addStretch()
-        self._refresh_sessions()
+        self._refresh_cycle()
         return page
 
-    def _refresh_sessions(self) -> None:
-        self.sessions_box.clear()
-        self.known_sessions = Session.recent(self.workspace)
-        for session in self.known_sessions:
-            self.sessions_box.addItem(f"{session.label}  ({session.created[:10]})")
-        if not self.known_sessions:
-            self.sessions_box.addItem("Aucune session enregistrée")
+    def _refresh_cycle(self) -> None:
+        """Say what is held right now, and what closing the window costs.
+
+        The table lives in memory only. That is the safer design, but it
+        has a consequence the user must not discover by losing an hour of
+        work: close this window and the real names of the current cycle
+        are gone for good.
+        """
+        if self.mapping is None:
+            self.cycle_label.setText(
+                "Aucun cycle en cours. Rien n'est enregistré sur ce disque : "
+                "la correspondance entre les vrais noms et les pseudonymes "
+                "n'existe qu'en mémoire, le temps de l'aller-retour."
+            )
+            self.cycle_label.setStyleSheet("color: palette(mid);")
+            self.resume_button.setEnabled(False)
+            return
+
+        self.cycle_label.setText(
+            f"Cycle en cours : {len(self.mapping.entries)} correspondance(s) en mémoire. "
+            "Ne fermez pas cette fenêtre avant d'avoir remis les vrais noms : "
+            "rien n'est enregistré, et le cycle serait définitivement perdu."
+        )
+        self.cycle_label.setStyleSheet("color: #8a6d00; font-weight: 600;")
+        self.resume_button.setEnabled(True)
 
     def _start_text(self) -> None:
         self.paste_area.setVisible(True)
@@ -157,7 +175,7 @@ class Window(QMainWindow):
             QMessageBox.critical(self, "Lecture impossible", str(error))
             return
         self.source_text = text
-        self._open_grid(mode="file", label=self.source_file.stem, images=images)
+        self._open_grid(self.source_file.stem, images=images)
 
     def _analyse_text(self) -> None:
         text = self.paste_area.toPlainText().strip()
@@ -165,7 +183,7 @@ class Window(QMainWindow):
             return
         self.source_text = text
         self.source_file = None
-        self._open_grid(mode="text", label="Texte collé")
+        self._open_grid("Texte collé")
 
     # --------------------------------------------------------------- grid
     def _build_grid(self) -> QWidget:
@@ -214,10 +232,8 @@ class Window(QMainWindow):
         layout.addLayout(row)
         return page
 
-    def _open_grid(self, mode: str, label: str, images: list[str] | None = None) -> None:
-        self.grid = workflow.build(self.source_text, images=images, lexicon=self.lexicon)
-        self.session = Session.create(self.workspace, label, mode=mode,
-                                      source_name=self.source_file.name if self.source_file else "")
+    def _open_grid(self, label: str, images: list[str] | None = None) -> None:
+        self.grid = workflow.build(self.source_text, images=images)
         self.grid_heading.setText(f"{len(self.grid.rows)} élément(s) repéré(s) — {label}")
         self._fill_table()
         self.images_label.setText(
@@ -275,7 +291,7 @@ class Window(QMainWindow):
         row = QHBoxLayout()
         copy = QPushButton("Copier")
         copy.clicked.connect(self._copy_result)
-        restart = QPushButton("Recommencer")
+        restart = QPushButton("Effacer le cycle")
         restart.clicked.connect(self._reset)
         done = QPushButton("J'ai la réponse de l'IA, remettre les vrais noms")
         done.setMinimumHeight(40)
@@ -291,7 +307,7 @@ class Window(QMainWindow):
         QApplication.clipboard().setText(self.result_area.toPlainText())
 
     def _run(self) -> None:
-        assert self.grid is not None and self.session is not None
+        assert self.grid is not None
         self._collect_edits()
 
         conflicts = self.grid.conflicts()
@@ -316,10 +332,8 @@ class Window(QMainWindow):
             )
             return
 
-        self.session.mapping = mapping
-        self.session.save()
-        workflow.remember_decisions(self.grid, self.lexicon)
-        self.lexicon.save()
+        self.mapping = mapping
+        self._refresh_cycle()
         self.result_heading.setText("Version anonyme — à soumettre à l'IA")
         self.result_area.setPlainText(shown)
         self._refresh_network_label()
@@ -359,10 +373,17 @@ class Window(QMainWindow):
         return page
 
     def _mapping(self) -> Mapping | None:
-        if self.session is None:
-            QMessageBox.warning(self, "Aucune session", "Ouvrez d'abord une session.")
+        if self.mapping is None:
+            QMessageBox.warning(
+                self,
+                "Aucun cycle en cours",
+                "Il n'y a pas de correspondance en mémoire. Rien n'étant "
+                "enregistré sur le disque, un cycle commencé avant la "
+                "fermeture de la fenêtre ne peut pas être repris : il faut "
+                "repartir du document d'origine.",
+            )
             return None
-        return self.session.mapping
+        return self.mapping
 
     def _restore_text(self) -> None:
         mapping = self._mapping()
@@ -417,17 +438,32 @@ class Window(QMainWindow):
             + "\n\nCorrigez-les dans le texte, ou cochez la case « extrait ».",
         )
 
-    def _resume(self) -> None:
-        if not getattr(self, "known_sessions", None):
-            return
-        self.session = self.known_sessions[self.sessions_box.currentIndex()]
-        self.workspace = self.session.folder.parent
-        self.stack.setCurrentIndex(3)
-
     # -------------------------------------------------------------- reset
-    def _reset(self) -> None:
-        """Start over without touching anything on disk."""
-        self.session = None
+    def _reset(self, confirm: bool = True) -> None:
+        """Clear the cycle. There is nothing on disk to clear with it.
+
+        Forgetting the table is the whole operation, because the table
+        was never written anywhere. That is also why it is worth a
+        confirmation: once dropped, a document already masked can never
+        be turned back.
+        """
+        if confirm and self.mapping is not None and self.mapping.entries:
+            question = QMessageBox(self)
+            question.setWindowTitle("Effacer le cycle")
+            question.setIcon(QMessageBox.Warning)
+            question.setText(
+                f"Effacer les {len(self.mapping.entries)} correspondance(s) en mémoire ?\n\n"
+                "Les vrais noms de ce cycle ne pourront plus être remis. "
+                "Tout document déjà anonymisé deviendra définitivement illisible."
+            )
+            question.setStandardButtons(QMessageBox.Cancel | QMessageBox.Yes)
+            question.setDefaultButton(QMessageBox.Cancel)
+            question.button(QMessageBox.Yes).setText("Effacer")
+            question.button(QMessageBox.Cancel).setText("Annuler")
+            if question.exec() != QMessageBox.Yes:
+                return
+
+        self.mapping = None
         self.grid = None
         self.source_text = ""
         self.source_file = None
@@ -438,55 +474,30 @@ class Window(QMainWindow):
         self.return_area.clear()
         self.allow_partial.setChecked(False)
         self.table.setRowCount(0)
-        self._refresh_sessions()
+        self._refresh_cycle()
         self.stack.setCurrentIndex(0)
 
-    def _forget(self) -> None:
-        selected = getattr(self, "known_sessions", None)
-        if not selected:
-            return
-        session = selected[self.sessions_box.currentIndex()]
-        outputs = session.outputs(self.workspace)
-
-        message = (
-            f"Supprimer définitivement « {session.label} » ?\n\n"
-            "La table de correspondance sera effacée. Les vrais noms de ce "
-            "cycle ne pourront plus être remis, ni par vous ni par personne."
-        )
-        if outputs:
-            message += "\n\nFichiers produits encore présents :\n" + "\n".join(
-                f"• {path.name}" for path in outputs
-            ) + "\n\nIls ne seront pas supprimés et deviendront définitivement illisibles."
-
-        confirm = QMessageBox(self)
-        confirm.setWindowTitle("Suppression définitive")
-        confirm.setText(message)
-        confirm.setIcon(QMessageBox.Warning)
-        confirm.setStandardButtons(QMessageBox.Cancel | QMessageBox.Yes)
-        confirm.setDefaultButton(QMessageBox.Cancel)
-        confirm.button(QMessageBox.Yes).setText("Supprimer")
-        confirm.button(QMessageBox.Cancel).setText("Annuler")
-        if confirm.exec() != QMessageBox.Yes:
-            return
-
-        removed = session.delete()
-        if self.session is not None and self.session.folder == session.folder:
-            self.session = None
-        self._reset()
-        QMessageBox.information(
-            self,
-            "Session supprimée",
-            f"{len(removed)} fichier(s) supprimé(s).\n\n"
-            "Les fichiers sont retirés du disque. Sur un SSD, cela ne garantit "
-            "pas que les blocs eux-mêmes soient écrasés : c'est le chiffrement "
-            "du disque qui rend cette suppression réellement définitive.",
-        )
-
-
-def _heading(text: str) -> QLabel:
-    label = QLabel(text)
-    label.setStyleSheet("font-weight: 600; margin-top: 10px;")
-    return label
+    def closeEvent(self, event) -> None:  # noqa: N802 (Qt's own spelling)
+        """Closing the window is what loses a cycle, so it asks first."""
+        if self.mapping is not None and self.mapping.entries:
+            question = QMessageBox(self)
+            question.setWindowTitle("Un cycle est en cours")
+            question.setIcon(QMessageBox.Warning)
+            question.setText(
+                f"{len(self.mapping.entries)} correspondance(s) sont en mémoire et "
+                "ne sont enregistrées nulle part.\n\n"
+                "Si vous fermez maintenant, les vrais noms de ce cycle seront "
+                "définitivement perdus et tout document déjà anonymisé deviendra "
+                "illisible."
+            )
+            question.setStandardButtons(QMessageBox.Cancel | QMessageBox.Close)
+            question.setDefaultButton(QMessageBox.Cancel)
+            question.button(QMessageBox.Close).setText("Fermer quand même")
+            question.button(QMessageBox.Cancel).setText("Revenir")
+            if question.exec() != QMessageBox.Close:
+                event.ignore()
+                return
+        event.accept()
 
 
 def _cell(text: str) -> QTableWidgetItem:

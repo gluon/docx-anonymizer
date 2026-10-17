@@ -1,8 +1,14 @@
 """Command line front end.
 
-The engine is usable before the interface exists, which is the point: the
-part that must be right is testable without a window.  The GUI comes
-later and calls exactly these functions.
+The engine is usable before the interface exists, which is the point:
+the part that must be right is testable without a window, and the window
+calls exactly these functions.
+
+Like the window, this writes no correspondence table. A cycle is one
+invocation: the table is built, used both ways, and dropped. That makes
+`anonymize` and `restore` separate commands impossible, which is the
+honest consequence of the design rather than an oversight: there is
+nothing to carry between two runs of a program that stores nothing.
 """
 
 from __future__ import annotations
@@ -11,103 +17,41 @@ import argparse
 import sys
 from pathlib import Path
 
+from . import plaintext, workflow
 from .engine import RefusedExport, anonymize, deanonymize
-from .mapping import Mapping, variants
+from .workflow import Decision
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="dxanon", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    out = sub.add_parser("anonymize", help="produce an anonymised copy")
-    out.add_argument("source", type=Path)
-    out.add_argument("destination", type=Path)
-    out.add_argument("--mapping", type=Path, required=True)
-
-    back = sub.add_parser("restore", help="put the real values back")
-    back.add_argument("source", type=Path)
-    back.add_argument("destination", type=Path)
-    back.add_argument("--mapping", type=Path, required=True)
-    back.add_argument(
-        "--allow-partial",
-        action="store_true",
-        help="accept a document where some pseudonyms never came back",
-    )
-
     scan = sub.add_parser("scan", help="show what would be masked, and decide nothing")
     scan.add_argument("source", type=Path, help="a .docx or a .txt")
-    scan.add_argument("--mapping", type=Path, help="write the proposed table here")
 
-    sessions = sub.add_parser("sessions", help="list the sessions stored in a folder")
-    sessions.add_argument("folder", type=Path, nargs="?", default=Path.cwd())
-
-    forget = sub.add_parser("forget", help="erase a session and its correspondence table")
-    forget.add_argument("folder", type=Path, help="the .dxanon folder to erase")
-    forget.add_argument("--yes", action="store_true", help="do not ask for confirmation")
-
-    add = sub.add_parser("add", help="declare one real value and its pseudonym")
-    add.add_argument("--mapping", type=Path, required=True)
-    add.add_argument("real")
-    add.add_argument("pseudonym")
-    add.add_argument("--kind", default="name")
-    add.add_argument(
-        "--with-variants",
-        action="store_true",
-        help="also declare the usual spellings of this name",
+    mask = sub.add_parser(
+        "mask",
+        help="mask a copy and print the table, for a cycle you drive yourself",
     )
+    mask.add_argument("source", type=Path)
+    mask.add_argument("destination", type=Path)
+
+    check = sub.add_parser(
+        "roundtrip",
+        help="mask and restore in one go, to prove a document survives the trip",
+    )
+    check.add_argument("source", type=Path)
+    check.add_argument("destination", type=Path, nargs="?")
 
     args = parser.parse_args(argv)
-
-    if args.command == "add":
-        return _add(args)
     if args.command == "scan":
         return _scan(args)
-    if args.command == "sessions":
-        return _sessions(args)
-    if args.command == "forget":
-        return _forget(args)
-    return _convert(args)
-
-
-def _sessions(args) -> int:
-    from .session import Session
-
-    found = Session.recent(args.folder)
-    for session in found:
-        print(f"  {session.created[:16]}  {session.label}")
-        print(f"      {session.folder}  ({len(session.mapping.entries)} entrée(s))")
-    if not found:
-        print(f"Aucune session dans {args.folder}")
-    return 0
-
-
-def _forget(args) -> int:
-    from .session import Session
-
-    session = Session.load(args.folder)
-    outputs = session.outputs()
-
-    if not args.yes:
-        print(f"Supprimer définitivement « {session.label} » ?")
-        print("La table de correspondance sera effacée. Les vrais noms de ce cycle")
-        print("ne pourront plus être remis, ni par vous ni par personne.")
-        for path in outputs:
-            print(f"  {path.name} restera sur le disque et deviendra illisible")
-        if input("Tapez SUPPRIMER pour confirmer : ").strip() != "SUPPRIMER":
-            print("Annulé, rien n'a été supprimé.")
-            return 1
-
-    removed = session.delete()
-    print(f"{len(removed)} fichier(s) supprimé(s).")
-    print("Sur un SSD, retirer un fichier n'écrase pas forcément les blocs qui le")
-    print("portaient. C'est le chiffrement du disque qui rend la suppression définitive.")
-    return 0
+    if args.command == "mask":
+        return _mask(args)
+    return _roundtrip(args)
 
 
 def _scan(args) -> int:
-    from . import workflow
-    from .workflow import Decision
-
     text, images = _read_any(args.source)
     grid = workflow.build(text, images=images)
 
@@ -123,11 +67,74 @@ def _scan(args) -> int:
         print(f"  IMAGE NON TRAITÉE : {name} (le texte qu'elle contient n'est pas lu)")
     for problem in grid.conflicts():
         print(f"  CONFLIT : {problem}")
-
-    if args.mapping:
-        grid.to_mapping().save(args.mapping)
-        print(f"\nTable proposée écrite dans {args.mapping}. Relisez-la avant de l'utiliser.")
     return 0
+
+
+def _mask(args) -> int:
+    """Mask, and print the table to standard output.
+
+    Printed rather than saved, deliberately. Whoever runs this decides
+    where it goes, and a terminal that is closed takes it with it. The
+    warning is there because the alternative is someone piping it into a
+    file next to the document it unmasks.
+    """
+    text, images = _read_any(args.source)
+    grid = workflow.build(text, images=images)
+    mapping = grid.to_mapping()
+
+    conflicts = grid.conflicts()
+    if conflicts:
+        for problem in conflicts:
+            print(f"CONFLIT : {problem}", file=sys.stderr)
+        return 2
+
+    try:
+        if args.source.suffix.lower() == ".docx":
+            report = anonymize(args.source, args.destination, mapping)
+            for name in report.images:
+                print(f"  IMAGE NON TRAITÉE : {name}", file=sys.stderr)
+        else:
+            args.destination.write_text(plaintext.anonymize(text, mapping), encoding="utf-8")
+    except RefusedExport as refused:
+        print("REFUSÉ, rien n'a été écrit :", file=sys.stderr)
+        for residue in refused.residues:
+            print(f"  {residue.value!r} -> {residue.where}", file=sys.stderr)
+        return 2
+
+    print(f"# {args.destination}")
+    print("# Table de correspondance. Elle n'est enregistrée nulle part :")
+    print("# sans elle, le document masqué ne peut plus être restauré.")
+    for entry in mapping.entries:
+        print(f"{entry.pseudonym}\t{entry.real}")
+    return 0
+
+
+def _roundtrip(args) -> int:
+    """Mask and restore in one invocation, and say whether anything moved."""
+    text, images = _read_any(args.source)
+    mapping = workflow.build(text, images=images).to_mapping()
+    destination = args.destination or args.source.with_name(f"{args.source.stem}_ANON{args.source.suffix}")
+
+    try:
+        if args.source.suffix.lower() == ".docx":
+            anonymize(args.source, destination, mapping)
+            restored = destination.with_name(f"{args.source.stem}_FINAL.docx")
+            deanonymize(destination, restored, mapping, require_all=False)
+            same = _read_any(args.source)[0] == _read_any(restored)[0]
+        else:
+            masked = plaintext.anonymize(text, mapping)
+            destination.write_text(masked, encoding="utf-8")
+            back, _ = plaintext.deanonymize(masked, mapping, require_all=False)
+            same = back == text
+    except RefusedExport as refused:
+        print("REFUSÉ, rien n'a été écrit :", file=sys.stderr)
+        for residue in refused.residues:
+            print(f"  {residue.value!r} -> {residue.where}", file=sys.stderr)
+        return 2
+
+    print(f"{len(mapping.entries)} correspondance(s)")
+    print("aller-retour exact :", "oui" if same else "NON")
+    return 0 if same else 1
 
 
 def _read_any(path: Path) -> tuple[str, list[str]]:
@@ -139,44 +146,6 @@ def _read_any(path: Path) -> tuple[str, list[str]]:
     package = Package.open(path)
     chunks = [textmap.full_text(textmap.parse(p.data)) for p in package.stories()]
     return "\n".join(c for c in chunks if c), [p.name for p in package.images()]
-
-
-def _add(args) -> int:
-    mapping = Mapping.load(args.mapping) if args.mapping.exists() else Mapping()
-    mapping.add(args.real, args.pseudonym, kind=args.kind)
-    if args.with_variants:
-        real_forms = variants(args.real)
-        fake_forms = variants(args.pseudonym)
-        for real, fake in zip(real_forms, fake_forms):
-            mapping.add(real, fake, kind=args.kind, note=f"variant of {args.real}")
-    mapping.save(args.mapping)
-    print(f"{len(mapping.entries)} entries in {args.mapping}")
-    return 0
-
-
-def _convert(args) -> int:
-    mapping = Mapping.load(args.mapping)
-    try:
-        if args.command == "anonymize":
-            report = anonymize(args.source, args.destination, mapping)
-        else:
-            report = deanonymize(
-                args.source, args.destination, mapping, require_all=not args.allow_partial
-            )
-    except RefusedExport as refused:
-        print("REFUSED, nothing was written:", file=sys.stderr)
-        for residue in refused.residues:
-            print(f"  {residue.value!r} -> {residue.where}", file=sys.stderr)
-        return 2
-
-    print(f"{report.replacements} replacement(s) in {len(report.parts_changed)} part(s)")
-    for name in report.parts_changed:
-        print(f"  changed {name}")
-    for name in report.images:
-        print(f"  IMAGE NOT PROCESSED: {name} (text inside it is not read)")
-    for value in report.unresolved:
-        print(f"  NOT RESTORED: {value}")
-    return 0
 
 
 if __name__ == "__main__":

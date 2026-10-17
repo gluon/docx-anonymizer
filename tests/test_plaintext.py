@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -12,7 +11,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from dxanon import plaintext  # noqa: E402
 from dxanon.engine import RefusedExport  # noqa: E402
 from dxanon.mapping import Mapping  # noqa: E402
-from dxanon.session import Session  # noqa: E402
 
 
 def mapping() -> Mapping:
@@ -89,42 +87,6 @@ class PastedText(unittest.TestCase):
         self.assertIn("Marc Lemoine", missing)
 
 
-class Sessions(unittest.TestCase):
-    def setUp(self):
-        self.dir = Path(tempfile.mkdtemp())
-
-    def test_a_session_survives_being_closed_and_reopened(self):
-        session = Session.create(self.dir, "Dupont c/ Orion", mode="text")
-        session.mapping.add("Jean Dupont", "Marc Lemoine")
-        session.save()
-
-        reopened = Session.load(session.folder)
-        self.assertEqual(reopened.label, "Dupont c/ Orion")
-        self.assertEqual(reopened.mapping.for_real("Jean Dupont").pseudonym, "Marc Lemoine")
-
-    def test_recent_lists_newest_first_and_skips_broken_folders(self):
-        first = Session.create(self.dir, "Affaire A", mode="text")
-        second = Session.create(self.dir, "Affaire B", mode="file")
-        second.created = "2099-01-01T00:00:00+00:00"
-        second.save()
-        (self.dir / "cassee.dxanon").mkdir()
-
-        labels = [s.label for s in Session.recent(self.dir)]
-        self.assertEqual(labels, ["Affaire B", "Affaire A"])
-        self.assertTrue(first.folder.exists())
-
-    def test_two_sessions_with_the_same_label_do_not_collide(self):
-        one = Session.create(self.dir, "Dupont", mode="text")
-        two = Session.create(self.dir, "Dupont", mode="text")
-        self.assertNotEqual(one.folder, two.folder)
-
-    def test_the_table_is_never_inside_the_exported_document(self):
-        """Stated in the README, pinned here: it lives beside, not within."""
-        session = Session.create(self.dir, "Affaire", mode="file")
-        self.assertEqual(session.mapping_path.parent, session.folder)
-        self.assertTrue(session.mapping_path.name.endswith(".json"))
-
-
 class Pseudonyms(unittest.TestCase):
     def test_a_generated_pseudonym_avoids_the_source_text(self):
         """A name already in the document cannot be undone afterwards."""
@@ -154,59 +116,6 @@ class Pseudonyms(unittest.TestCase):
         surnames = {name.split()[-1] for name in taken}
         self.assertGreater(len(surnames), 3, taken)
 
-
-class ErasingASession(unittest.TestCase):
-    """The table is the one file that maps a pseudonym back to a client."""
-
-    def setUp(self):
-        self.dir = Path(tempfile.mkdtemp())
-        self.session = Session.create(self.dir, "Affaire close", mode="file",
-                                      source_name="conclusions.docx")
-        self.session.mapping.add("Jean Dupont", "Marc Lemoine")
-        self.session.save()
-
-    def test_the_table_is_gone_from_the_disk(self):
-        table = self.session.mapping_path
-        self.assertTrue(table.exists())
-        self.assertIn("Jean Dupont", table.read_text(encoding="utf-8"))
-
-        removed = self.session.delete()
-
-        self.assertFalse(table.exists())
-        self.assertFalse(self.session.folder.exists())
-        self.assertIn(table, removed)
-
-    def test_erasing_twice_is_harmless(self):
-        self.session.delete()
-        self.assertEqual(self.session.delete(), [])
-
-    def test_an_erased_session_leaves_the_listing(self):
-        self.assertEqual(len(Session.recent(self.dir)), 1)
-        self.session.delete()
-        self.assertEqual(Session.recent(self.dir), [])
-
-    def test_produced_files_are_reported_not_deleted(self):
-        """An anonymised copy may have been sent somewhere.
-
-        Guessing wrong either way is worse than naming them and letting
-        the user decide.
-        """
-        produced = self.dir / "conclusions_ANON.docx"
-        produced.write_bytes(b"PK\x03\x04")
-
-        self.assertEqual(self.session.outputs(self.dir), [produced])
-        self.session.delete()
-        self.assertTrue(produced.exists())
-
-    def test_the_other_sessions_are_untouched(self):
-        other = Session.create(self.dir, "Affaire en cours", mode="text")
-        other.mapping.add("Sylvie Marchand", "Claire Riviere")
-        other.save()
-
-        self.session.delete()
-
-        self.assertTrue(other.mapping_path.exists())
-        self.assertEqual(Session.load(other.folder).label, "Affaire en cours")
 
 
 if __name__ == "__main__":

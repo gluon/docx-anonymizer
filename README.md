@@ -153,31 +153,30 @@ public and has no network code in it. The guard makes that absence
 visible to someone who cannot read the source. Loopback is allowed and
 counted separately, since it never leaves the machine.
 
-## Starting over, and erasing a cycle
+## One shot, and nothing on disk
 
-Two different things, deliberately separate.
+The correspondence table maps every pseudonym back to the client. Written
+to disk it becomes the most dangerous file in the case folder, outliving
+the work that needed it, and then the tool needs a delete button to remove
+what it should never have written.
 
-**Recommencer** clears the screen and forgets the session in memory.
-Nothing on disk is touched, so a cycle interrupted by a closed window can
-still be picked up from the list of recent sessions.
+So it is not written. The table exists in memory for the length of one
+round trip: mask, work with the AI, restore, done. There is deliberately
+no `save` on `Mapping`, because a save method is an invitation to call it.
 
-**Supprimer définitivement** erases the session folder, the correspondence
-table included. After that the real names of that cycle cannot be put
-back, by anyone. Files the session produced are named but not deleted: an
-anonymised copy may have been sent somewhere, and guessing wrong either
-way is worse than asking. They become permanently unreadable, and the
-window says so before it does it.
+**The cost, stated rather than discovered.** Close the window mid-cycle
+and the real names are gone, and any document already masked can never be
+turned back. The window says so in three places: a standing line on the
+home screen while a cycle is live, a confirmation on "Effacer le cycle",
+and a confirmation on closing the window itself.
 
-What erasing does **not** claim: that the bytes are unrecoverable. On an
-SSD, wear levelling means overwriting a file in place does not reliably
-overwrite the blocks that held it, so a tool that scrubbed before
-unlinking would be selling a guarantee it cannot keep. The files are
-removed; whole-disk encryption is what makes that removal meaningful.
+**Erasing a cycle** is therefore just forgetting the table. There are no
+files to hunt down, no leftovers in a hidden application folder, and
+nothing a later audit of the firm's disk can turn up.
 
-```
-dxanon sessions ~/Documents
-dxanon forget ~/Documents/Dupont-c-Orion.dxanon
-```
+`tests/test_no_persistence.py` enforces this by watching the filesystem
+rather than by reading the code: a full text cycle and a full file cycle
+must leave behind exactly the files that were asked for and nothing else.
 
 ## Not covered, by design
 
@@ -195,13 +194,21 @@ dxanon forget ~/Documents/Dupont-c-Orion.dxanon
 pip install -e .
 PYTHONPATH=src:tests python -m unittest discover -s tests -v
 
-dxanon scan conclusions.docx --mapping case.json
-dxanon anonymize conclusions.docx conclusions_ANON.docx --mapping case.json
-dxanon restore conclusions_ANON_corrige.docx conclusions_final.docx --mapping case.json
+dxanon scan conclusions.docx
+dxanon mask conclusions.docx conclusions_ANON.docx
+dxanon roundtrip conclusions.docx
 ```
 
-`scan` decides nothing: it prints what would be masked and writes a
-proposed table for review.
+`scan` decides nothing: it prints what would be masked and stops.
+
+`mask` writes the masked copy and prints the table to standard output,
+never to a file: whoever runs it decides where it goes, and a closed
+terminal takes it with it.
+
+`roundtrip` masks and restores in one invocation and reports whether the
+document came back unchanged. There is no separate `restore` command,
+which is the honest consequence of storing nothing: there is nothing to
+carry between two runs of a program that keeps no state.
 
 The window is `python -m dxanon` (needs PySide6). `python -m dxanon
 --self-check` exercises every layer and exits, which is how the Windows

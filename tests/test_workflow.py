@@ -165,60 +165,6 @@ class OnTheRealisticSample(unittest.TestCase):
             self.assertIn(party, masked, party)
 
 
-class PersonalLexicon(unittest.TestCase):
-    """A tool that asks the same question every week stops being read."""
-
-    def setUp(self):
-        import tempfile
-        from dxanon.lexicon import Lexicon
-
-        self.path = Path(tempfile.mkdtemp()) / "mots.txt"
-        self.lexicon = Lexicon.load(self.path)
-
-    def test_a_word_kept_once_is_kept_next_time(self):
-        text = "Le Cachet du Cabinet figure sur la piece."
-        grid = workflow.build(text)
-        grid.set_decision("Cachet", Decision.KEEP)
-        workflow.remember_decisions(grid, self.lexicon)
-        self.lexicon.save()
-
-        from dxanon.lexicon import Lexicon
-
-        again = workflow.build(text, lexicon=Lexicon.load(self.path))
-        row = next(r for r in again.rows if r.value == "Cachet")
-        self.assertEqual(row.decision, Decision.KEEP)
-
-    def test_masking_it_later_overrides_what_was_remembered(self):
-        text = "Le Cachet du Cabinet figure sur la piece."
-        grid = workflow.build(text)
-        grid.set_decision("Cachet", Decision.KEEP)
-        workflow.remember_decisions(grid, self.lexicon)
-
-        grid.set_decision("Cachet", Decision.REPLACE)
-        workflow.remember_decisions(grid, self.lexicon)
-        self.assertFalse(self.lexicon.knows("Cachet"))
-
-    def test_an_identifier_is_never_remembered(self):
-        """Not masking one IBAN says nothing about IBANs."""
-        grid = workflow.build("IBAN FR1420041010050500013M02606 au dossier.")
-        for row in grid.rows:
-            row.decision = Decision.KEEP
-        workflow.remember_decisions(grid, self.lexicon)
-        self.assertFalse(any("FR14" in w for w in self.lexicon.words))
-
-    def test_a_cited_party_is_not_remembered_either(self):
-        text = "Cass. soc. 25 septembre 2013, Societe Delattre, pourvoi n° 12-12.883."
-        grid = workflow.build(text)
-        workflow.remember_decisions(grid, self.lexicon)
-        self.assertFalse(self.lexicon.knows("Delattre"))
-
-    def test_the_file_is_readable_by_a_human(self):
-        self.lexicon.remember("Cachet")
-        self.lexicon.save()
-        content = self.path.read_text(encoding="utf-8")
-        self.assertIn("Cachet", content)
-        self.assertIn("#", content, "the file should explain itself")
-
 
 if __name__ == "__main__":
     unittest.main()
