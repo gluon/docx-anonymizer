@@ -20,7 +20,8 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QFileDialog, QHBoxLayout, QHeaderView,
     QLabel, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QSizePolicy,
-    QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QStackedWidget, QTableWidget, QTableWidgetItem, QTextBrowser, QVBoxLayout,
+    QWidget,
 )
 
 from . import engine, plaintext, workflow
@@ -29,6 +30,72 @@ from .engine import RefusedExport
 from .mapping import Mapping
 from .netguard import NetworkGuard
 from .workflow import Decision
+
+#: Index of the help page in the stack, so the other screens stay 0..3.
+HELP = 4
+
+HELP_TEXT = """
+<style>
+  h2 { margin-bottom: 2px; }
+  p, li { margin-top: 2px; margin-bottom: 6px; }
+</style>
+
+<h2>Le principe</h2>
+<p>Vous masquez les noms, vous travaillez avec l'IA sur la version
+masquée, vous remettez les vrais noms au retour. L'original ne sort
+jamais de cet ordinateur.</p>
+
+<h2>Le cycle</h2>
+<ol>
+  <li>Collez un texte, ou ouvrez un document Word.</li>
+  <li>Vérifiez la grille, décochez ce qui ne doit pas être masqué.</li>
+  <li>Copiez la version masquée dans le chat, travaillez.</li>
+  <li>Revenez, collez la réponse, récupérez vos vrais noms.</li>
+</ol>
+
+<h2>Ne fermez pas la fenêtre en cours de cycle</h2>
+<p>La correspondance entre vrais noms et pseudonymes n'est enregistrée
+nulle part : elle n'existe qu'en mémoire, le temps de l'aller-retour.
+C'est voulu, car ce fichier serait le plus dangereux du dossier.</p>
+<p>Conséquence : si vous fermez la fenêtre avant d'avoir remis les vrais
+noms, ils sont perdus, et tout document déjà masqué devient illisible.
+La fenêtre vous prévient avant de se fermer.</p>
+
+<h2>Les trois niveaux de la grille</h2>
+<p><b>Certain</b> : numéro de sécurité sociale, IBAN, SIRET, adresse,
+email, téléphone. Reconnus à leur forme, masqués d'office.</p>
+<p><b>À confirmer</b> : tout ce qui ressemble à un nom propre. L'outil
+propose, vous tranchez. Il propose large : mieux vaut décocher un mot
+de trop que laisser passer un nom.</p>
+<p><b>Jurisprudence</b> : les noms de parties dans un arrêt cité sont
+<b>conservés</b>. Ce sont des noms publics, et les masquer rendrait la
+citation incompréhensible.</p>
+
+<h2>Ce que l'outil ne sait pas faire</h2>
+<ul>
+  <li><b>Lire le texte dans les images.</b> Signature scannée, tampon,
+      capture d'écran : il les signale, à vous de décider.</li>
+  <li><b>Les PDF.</b> Documents Word et texte collé uniquement.</li>
+  <li><b>Juger ce qui est sensible.</b> Il applique ce que vous cochez.</li>
+  <li><b>Un nom jamais écrit avec une majuscule</b> nulle part dans le
+      document.</li>
+</ul>
+
+<h2>Masquer les noms ne suffit pas toujours</h2>
+<p>Une entreprise de douze personnes dans une commune nommée reste
+reconnaissable même sans aucun nom. Cet arbitrage reste le vôtre.</p>
+
+<h2>Le voyant en bas à droite</h2>
+<p>Vert tant qu'aucune connexion réseau n'a été ouverte. Le programme
+bloque ses propres connexions et compte les tentatives : vous pouvez le
+constater plutôt que nous croire.</p>
+
+<h2>Si l'outil refuse de produire un fichier</h2>
+<p>C'est qu'il a retrouvé une valeur réelle dans ce qu'il allait écrire.
+Il n'écrit rien et vous dit laquelle. De même au retour, s'il ne
+retrouve pas tous les pseudonymes : l'IA en a reformulé un, et il
+préfère refuser plutôt que de rendre un document à moitié restauré.</p>
+"""
 
 CERTAINTY_LABEL = {
     Certainty.CERTAIN: "Certain",
@@ -63,15 +130,53 @@ class Window(QMainWindow):
         self.stack.addWidget(self._build_grid())
         self.stack.addWidget(self._build_result())
         self.stack.addWidget(self._build_return())
+        self.stack.addWidget(self._build_help())
 
         self._build_status_bar()
 
     # ------------------------------------------------------------- chrome
     def _build_status_bar(self) -> None:
+        help_button = QPushButton("Aide")
+        help_button.setFlat(True)
+        help_button.clicked.connect(self._open_help)
+        self.statusBar().addWidget(help_button)
+
         self.network_label = QLabel()
         self.network_label.setContentsMargins(8, 0, 8, 0)
         self.statusBar().addPermanentWidget(self.network_label)
         self._refresh_network_label()
+
+    def _open_help(self) -> None:
+        self._came_from = self.stack.currentIndex()
+        self.stack.setCurrentIndex(HELP)
+
+    # --------------------------------------------------------------- help
+    def _build_help(self) -> QWidget:
+        """Everything that used to sit on screen being ignored.
+
+        The home page carried a paragraph explaining that nothing is
+        written to disk, and the grid carried another about case law.
+        Both were true, both were read by nobody: a standing wall of
+        text is furniture, and the eye learns to skip it. It belongs
+        behind a button, written to be scanned rather than read.
+        """
+        page = QWidget()
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(28, 24, 28, 24)
+
+        title = QLabel("Aide")
+        title.setFont(QFont(self.font().family(), 17, QFont.Bold))
+        outer.addWidget(title)
+
+        body = QTextBrowser()
+        body.setOpenExternalLinks(False)
+        body.setHtml(HELP_TEXT)
+        outer.addWidget(body, stretch=1)
+
+        back = QPushButton("Retour")
+        back.clicked.connect(lambda: self.stack.setCurrentIndex(getattr(self, "_came_from", 0)))
+        outer.addWidget(back)
+        return page
 
     def _refresh_network_label(self) -> None:
         if self.guard.clean:
@@ -79,7 +184,7 @@ class Window(QMainWindow):
             self.network_label.setStyleSheet("color: #146c43; font-weight: 600;")
         else:
             self.network_label.setText(
-                f"ATTENTION : {self.guard.attempts} tentative(s) de connexion bloquée(s)"
+                f"{self.guard.attempts} connexion(s) bloquée(s)"
             )
             self.network_label.setStyleSheet("color: #b02a37; font-weight: 700;")
 
@@ -94,8 +199,7 @@ class Window(QMainWindow):
         title.setFont(QFont(self.font().family(), 20, QFont.Bold))
         layout.addWidget(title)
         layout.addWidget(QLabel(
-            "Masquez les noms avant de soumettre un texte à une IA, puis remettez-les "
-            "au retour. Rien ne sort de cet ordinateur."
+            "Masquez les noms avant de soumettre un texte à une IA, remettez-les au retour."
         ))
 
         buttons = QHBoxLayout()
@@ -139,22 +243,16 @@ class Window(QMainWindow):
         are gone for good.
         """
         if self.mapping is None:
-            self.cycle_label.setText(
-                "Aucun cycle en cours. Rien n'est enregistré sur ce disque : "
-                "la correspondance entre les vrais noms et les pseudonymes "
-                "n'existe qu'en mémoire, le temps de l'aller-retour."
-            )
-            self.cycle_label.setStyleSheet("color: palette(mid);")
-            self.resume_button.setEnabled(False)
+            self.cycle_label.setText("")
+            self.resume_button.setVisible(False)
             return
 
         self.cycle_label.setText(
-            f"Cycle en cours : {len(self.mapping.entries)} correspondance(s) en mémoire. "
-            "Ne fermez pas cette fenêtre avant d'avoir remis les vrais noms : "
-            "rien n'est enregistré, et le cycle serait définitivement perdu."
+            f"Cycle en cours, {len(self.mapping.entries)} noms en mémoire. "
+            "Ne fermez pas la fenêtre."
         )
-        self.cycle_label.setStyleSheet("color: #8a6d00; font-weight: 600;")
-        self.resume_button.setEnabled(True)
+        self.cycle_label.setStyleSheet("color: #d08700; font-weight: 600;")
+        self.resume_button.setVisible(True)
 
     def _start_text(self) -> None:
         self.paste_area.setVisible(True)
@@ -196,11 +294,7 @@ class Window(QMainWindow):
         self.grid_heading.setFont(QFont(self.font().family(), 15, QFont.Bold))
         layout.addWidget(self.grid_heading)
 
-        self.grid_hint = QLabel(
-            "Décochez ce qui ne doit pas être masqué. Les noms de parties dans la "
-            "jurisprudence citée sont conservés : les masquer rendrait la citation "
-            "incompréhensible."
-        )
+        self.grid_hint = QLabel("Décochez ce qui ne doit pas être masqué.")
         self.grid_hint.setWordWrap(True)
         layout.addWidget(self.grid_hint)
 
@@ -238,9 +332,8 @@ class Window(QMainWindow):
         self._fill_table()
         self.images_label.setText(
             "" if not self.grid.images else
-            f"{len(self.grid.images)} image(s) dans ce document. Le texte qu'elles "
-            "contiennent (signature scannée, tampon, capture d'écran) n'est pas lu "
-            "et n'est donc pas masqué."
+            f"{len(self.grid.images)} image(s) non traitée(s) : le texte qu'elles "
+            "contiennent n'est pas lu."
         )
         self.stack.setCurrentIndex(1)
 
@@ -348,16 +441,12 @@ class Window(QMainWindow):
         heading = QLabel("Remettre les vrais noms")
         heading.setFont(QFont(self.font().family(), 15, QFont.Bold))
         layout.addWidget(heading)
-        layout.addWidget(QLabel(
-            "Collez ici le texte corrigé par l'IA, ou ouvrez le document corrigé."
-        ))
+        layout.addWidget(QLabel("Collez le texte corrigé, ou ouvrez le document corrigé."))
 
         self.return_area = QPlainTextEdit()
         layout.addWidget(self.return_area, stretch=1)
 
-        self.allow_partial = QCheckBox(
-            "Ce n'est qu'un extrait : accepter que certains pseudonymes soient absents"
-        )
+        self.allow_partial = QCheckBox("Ce n'est qu'un extrait du texte masqué")
         layout.addWidget(self.allow_partial)
 
         row = QHBoxLayout()
