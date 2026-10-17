@@ -166,5 +166,48 @@ class OnTheRealisticSample(unittest.TestCase):
 
 
 
+class PseudonymsMustNotOverlap(unittest.TestCase):
+    """No subject may be given a word of another subject's pseudonym.
+
+    "Camille" was given "Bruno" while another person was given "Bruno
+    Delacroix". The restoration replaces the longer first, so the full
+    text round-trips fine and the defect stays hidden, until a model
+    shortens "Bruno Delacroix" to "le Docteur Bruno" and the document
+    comes home naming the wrong person. There is nothing to notice it
+    with, which is what makes it worth a test.
+    """
+
+    def setUp(self):
+        self.text = SAMPLE.read_text(encoding="utf-8")
+        self.grid = workflow.build(self.text)
+
+    def test_no_pseudonym_is_a_word_of_another_subject(self):
+        by_group: dict[str, set[str]] = {}
+        for row in self.grid.rows:
+            if row.decision is Decision.REPLACE and row.is_person_like:
+                by_group.setdefault(row.group, set()).update(row.pseudonym.split())
+
+        for group, words in by_group.items():
+            for other, other_words in by_group.items():
+                if group == other:
+                    continue
+                shared = words & other_words
+                self.assertFalse(shared, f"{group} and {other} share {shared}")
+
+    def test_a_shortened_pseudonym_cannot_restore_as_someone_else(self):
+        """The failure the rule above prevents, played out."""
+        mapping = self.grid.to_mapping()
+        two_word = [e for e in mapping.entries if len(e.pseudonym.split()) == 2]
+
+        for entry in two_word[:6]:
+            shortened = entry.pseudonym.split()[-1]
+            match = mapping.for_pseudonym(shortened)
+            if match is not None:
+                self.assertEqual(
+                    match.real.split()[-1], entry.real.split()[-1],
+                    f"{shortened} restores to {match.real}, not to {entry.real}",
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

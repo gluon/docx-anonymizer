@@ -129,6 +129,13 @@ def _assign(rows: list[Row], text: str) -> None:
             member.group = longest.value
             member.pseudonym = _unique(_render_like(base, longest.value, member.value), taken)
             taken.add(member.pseudonym)
+            # Reserve the individual words too, so no other subject is
+            # given a name that is a word of this one. Without this,
+            # "Camille" became "Bruno" while another person became
+            # "Bruno Delacroix": a model shortening that to "le Docteur
+            # Bruno" would have had it restored as "le Docteur Camille",
+            # silently and with no way to notice.
+            taken.update(member.pseudonym.split())
 
 
 def _group_rows(rows: list[Row]) -> list[list[Row]]:
@@ -302,7 +309,11 @@ def _filler(kind: str, position: int, taken: set[str], text: str) -> str:
     if kind != "org":
         return propose(kind, taken, text=text).split()[-1]
     if position == 1:
-        return _ACTIVITY_WORDS[len(taken) % len(_ACTIVITY_WORDS)]
+        # Picked by position, not by how many pseudonyms exist so far.
+        # Keying it on len(taken) made every name in the document depend
+        # on how many rows the grid happened to hold, so adding one
+        # detection silently renamed everything.
+        return _ACTIVITY_WORDS[position % len(_ACTIVITY_WORDS)]
     return propose("place", taken, text=text)
 
 

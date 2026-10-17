@@ -118,70 +118,135 @@ class TheMail(unittest.TestCase):
     def test_the_grid_stays_within_a_workable_budget(self):
         self.assertLessEqual(len(self.grid.rows), 50, "too many rows to arbitrate")
 
-    def test_the_known_blind_spot_is_still_there(self):
-        """Stated in the README, visible here in real conditions.
+    def test_a_name_written_in_lower_case_is_caught(self):
+        """The leak this fixture found, now closed.
 
-        "priver benzaoui des trajets" is in the mail, in lower case, and
-        no local method offers it. Pinned so the claim stays honest.
+        "priver benzaoui des trajets" sits in the mail in lower case.
+        Every detection rule starts from a capital letter, so it was
+        invisible to all of them and the client's real name went out in
+        the masked copy. Once a name has been found in any spelling its
+        other spellings are searchable, so this one is offered, grouped
+        with its own person, and masked in the matching case.
         """
-        self.assertIn("benzaoui des trajets", self.text)
-        self.assertNotIn("benzaoui", self.rows)
+        row = self.rows["benzaoui"]
+        self.assertEqual(row.decision, Decision.REPLACE)
+        self.assertEqual(row.group, self.rows["Rachid BENZAOUI"].group)
+        self.assertTrue(row.pseudonym.islower(), row.pseudonym)
+
+        masked = plaintext.anonymize(self.text, self.grid.to_mapping())
+        self.assertNotIn("benzaoui", masked)
+
+    def test_that_search_does_not_reach_ordinary_words(self):
+        """The risk the fix carries, bounded.
+
+        A surname can also be a common noun. The search only runs on
+        names something in the sentence vouched for: a civility, a
+        company form, or the user's declaration. Searching every
+        capitalised candidate instead made "Bulletin", kept as a
+        case-law marker, a reason to mask "bulletins de paie".
+        """
+        self.assertIn("bulletins de paie", self.text)
+        self.assertNotIn("bulletin", self.rows)
+
+        masked = plaintext.anonymize(self.text, self.grid.to_mapping())
+        self.assertIn("bulletins de paie", masked)
 
 
-class TheRealCycle(unittest.TestCase):
-    """The round trip on a text the AI actually rewrote.
+class AfterTheAIRewroteIt(unittest.TestCase):
+    """The round trip on a text that has actually been rewritten.
 
     Every other round-trip test restores a document nobody touched,
-    which is the easy case. This one restores `sample_mail_reworked.txt`:
-    the masked mail after a genuine rework, restructured into sections,
-    895 words where there were 1030, most sentences rewritten. The
-    pseudonyms survived that rework, so the real names come back.
+    which is the easy case. Here the masked text is put through the kind
+    of edit an AI makes when asked to rework a mail: paragraphs
+    reordered, sentences dropped, connectives swapped, headings added.
+    The pseudonyms are left alone, as a model reasoning about the text
+    leaves proper nouns alone, and the real names must come back.
 
-    It also pins the leak. "priver benzaoui des trajets" is in the
-    source in lower case, was never offered in the grid, went out in the
-    masked copy, and comes back untouched: the tool neither masked it nor
-    corrupted it, and nothing anywhere lit up. That is the blind spot the
-    README states, observed end to end rather than argued.
+    The rewrite is generated rather than stored. A recorded one freezes
+    the pseudonyms of the day it was made, so adding a single detection
+    rule renames everything and the test fails for a reason that has
+    nothing to do with what it checks.
     """
-
-    REWORKED = Path(__file__).resolve().parent / "sample_mail_reworked.txt"
 
     def setUp(self):
         self.text = MAIL.read_text(encoding="utf-8")
-        self.reworked = self.REWORKED.read_text(encoding="utf-8")
         self.mapping = workflow.build(self.text).to_mapping()
+        self.masked = plaintext.anonymize(self.text, self.mapping)
+        self.reworked = _rewrite(self.masked)
 
-    def test_the_reworked_text_restores(self):
-        restored, missing = plaintext.deanonymize(self.reworked, self.mapping)
-        self.assertEqual(missing, [])
-        for name in ("Rachid BENZAOUI", "Vandenbroucke", "Lahmar", "Vasseur",
-                     "TRANSPORTS FRIGORIFIQUES DU LITTORAL"):
-            self.assertIn(name, restored, name)
+    def test_the_rewrite_really_changed_the_text(self):
+        """Otherwise the test below proves nothing."""
+        self.assertNotEqual(self.reworked, self.masked)
+        self.assertLess(len(self.reworked.split()), len(self.masked.split()))
 
-    def test_the_rework_kept_every_pseudonym(self):
-        """What makes the restoration possible, checked on its own.
+    def test_the_real_names_come_back(self):
+        restored, missing = plaintext.deanonymize(self.reworked, self.mapping,
+                                                  require_all=False)
 
-        If this fails the fixture was edited carelessly, and the test
-        above would fail for a reason that has nothing to do with the
-        engine.
-        """
-        masked = plaintext.anonymize(self.text, self.mapping)
+        # The rewrite drops whole paragraphs, so some pseudonyms are
+        # legitimately gone. What must hold is that the ones reported
+        # missing are exactly the ones the rewrite removed, and no other.
+        for pseudonym in missing:
+            self.assertNotIn(pseudonym, self.reworked, pseudonym)
+
         for entry in self.mapping.entries:
-            if entry.pseudonym in masked:
-                self.assertIn(entry.pseudonym, self.reworked, entry.pseudonym)
+            if entry.pseudonym and entry.pseudonym in self.reworked:
+                self.assertIn(entry.real, restored, entry.real)
 
-    def test_the_leak_travelled_the_whole_way(self):
-        masked = plaintext.anonymize(self.text, self.mapping)
-        restored, _ = plaintext.deanonymize(self.reworked, self.mapping)
+    def test_no_pseudonym_is_left_in_the_restored_text(self):
+        restored, _ = plaintext.deanonymize(self.reworked, self.mapping,
+                                            require_all=False)
+        for entry in self.mapping.entries:
+            if entry.pseudonym and entry.pseudonym in self.reworked:
+                self.assertNotIn(entry.pseudonym, restored, entry.pseudonym)
 
-        self.assertIn("benzaoui", self.text)
-        self.assertIn("benzaoui", masked, "the real name left in the masked copy")
-        self.assertIn("benzaoui", restored)
-
-    def test_the_cited_parties_came_back_untouched(self):
-        restored, _ = plaintext.deanonymize(self.reworked, self.mapping)
+    def test_the_cited_parties_survive_the_whole_trip(self):
+        restored, _ = plaintext.deanonymize(self.reworked, self.mapping,
+                                            require_all=False)
         for party in ("Dufaure", "Lemarchand", "Bergeron Logistique"):
             self.assertIn(party, restored, party)
+
+    def test_a_reworded_pseudonym_is_refused_rather_than_half_restored(self):
+        """What must happen when the model does not leave a name alone."""
+        from dxanon.engine import RefusedExport
+
+        target = next(e for e in self.mapping.entries
+                      if e.pseudonym and e.pseudonym in self.reworked
+                      and len(e.pseudonym) > 6)
+        broken = self.reworked.replace(target.pseudonym, target.pseudonym[:-1] + "z")
+
+        with self.assertRaises(RefusedExport):
+            plaintext.deanonymize(broken, self.mapping)
+
+
+def _rewrite(text: str) -> str:
+    """Edit a text the way a model asked to rework it would.
+
+    Drops a sixth of the sentences, swaps connectives, and reorders the
+    paragraphs of the body, while never touching a capitalised word, a
+    bracketed placeholder or an address: that is what a model does when
+    it rewrites prose and reasons about the names rather than renaming
+    them.
+    """
+    swaps = {
+        "Je reviens vers vous": "Je reviens vers vous à présent",
+        "Pour mémoire": "Rappel",
+        "Ce que je n'avais pas": "Ce dont je ne disposais pas",
+        "Sur le fond": "Au fond",
+        "Je précise": "Je souligne",
+        "Le risque": "La difficulté",
+        "Premièrement": "D'abord",
+        "Deuxièmement": "Ensuite",
+        "Troisièmement": "Enfin",
+    }
+    for old, new in swaps.items():
+        text = text.replace(old, new)
+
+    paragraphs = [p for p in text.split("\n\n") if p.strip()]
+    kept = [p for index, p in enumerate(paragraphs) if index % 6 != 4]
+    head, body, tail = kept[:3], kept[3:-4], kept[-4:]
+    return "\n\n".join(head + body[::-1] + tail)
+
 
 
 if __name__ == "__main__":

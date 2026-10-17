@@ -230,6 +230,11 @@ def propose(kind: str, taken: set[str], text: str = "") -> str:
             folded = _strip_accents(full).casefold()
             if folded in folded_taken:
                 continue
+            # Word by word as well as whole: a pseudonym that is a word
+            # of another pseudonym can be restored as the wrong person
+            # the moment a model shortens the longer one.
+            if any(_strip_accents(part).casefold() in folded_taken for part in full.split()):
+                continue
             # Accents and case are not a disguise: "Marc Rivière" collides
             # with "Marc Riviere" in the source, and a pseudonym that is
             # already in the document cannot be undone.

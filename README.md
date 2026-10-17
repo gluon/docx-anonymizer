@@ -45,6 +45,16 @@ always a typo, and it identifies its holder just as well.
 **Declared names and their spellings**, generated from what the user
 typed, never guessed from the document.
 
+**Other spellings of a name already found.** Every rule above starts
+from a capital letter, so a surname typed in lower case mid-sentence is
+invisible to all of them: in the mail fixture, "priver benzaoui des
+trajets" went out in the masked copy with the client's real name in it.
+Once a name has been found in any spelling, its other spellings are
+searchable. This runs only on names something in the sentence vouched
+for, a civility, a company form or the user's own declaration, because a
+surname can also be a common noun and masking every "bulletin" in a file
+that cites the Bulletin would wreck the text.
+
 **Over-detection.** Rather than recognising names, eliminate what cannot
 be one — known legal vocabulary, sentence openers, the structural words a
 pleading is built from — and offer the rest. Exhaustive by construction
@@ -70,12 +80,10 @@ and pinned as a budget test:
 | Rows to arbitrate | 35 | 47 |
 | Identifiers found with certainty | 12 | 14 |
 | Cited parties correctly kept | 3 | 3 |
-| People or companies missed | 0 | 1 |
+| People or companies missed | 0 | 0 |
 
-The one miss is the stated blind spot: a surname written once in lower
-case mid-sentence. Both figures are pinned as budget tests, so a change
-to the lexicon or the patterns cannot quietly make the grid unusable in
-either direction.
+Both figures are pinned as budget tests, so a change to the lexicon or
+the patterns cannot quietly make the grid unusable in either direction.
 
 The mail thread was the harder document, and it is the one that found the
 real defects: a letter is mostly greeting and sign-off, a company is
@@ -183,7 +191,9 @@ must leave behind exactly the files that were asked for and nothing else.
 - **Text inside images.** A scanned signature, a stamp, a screenshot of a
   mail client. They are counted and reported, never silently passed over.
 - **PDF and scanned documents.** Word files only.
-- **Names nobody declared and that detection missed.** See the limit above.
+- **A name nobody declared, never capitalised anywhere in the document.**
+  Lower-case spellings are now found, but only of names already seen with
+  a capital somewhere.
 - **Judgement about what is sensitive.** The tool applies what it is told.
 - **Re-identification from context.** A twelve-person company in a named
   town stays recognisable with every name removed.

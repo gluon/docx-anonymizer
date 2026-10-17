@@ -229,6 +229,7 @@ LEGAL_LEXICON = frozenset(
     Employeur Salarié Salariée Demandeur Demanderesse Défendeur Défenderesse
     Requérant Partie Parties Conseil Avocat Barreau Greffe Audience Jugement
     Arrêt Ordonnance Décision Attestation Pièce Pièces Bordereau Conclusions
+    Bulletin Bulletins Recueil Revue Chronique Note Observations Commentaire
     Monsieur Madame Mademoiselle Maître Docteur Professeur
     Janvier Février Mars Avril Mai Juin Juillet Août Septembre Octobre
     Novembre Décembre Lundi Mardi Mercredi Jeudi Vendredi Samedi Dimanche
@@ -481,7 +482,57 @@ def find(text: str, known: list[str] | None = None) -> list[Finding]:
                    else "mot capitalisé hors vocabulaire juridique")
             findings.append(Finding(word, start, match.end(), "candidate", certainty, why))
 
+    findings.extend(_other_spellings(text, findings))
     return _deduplicate(findings)
+
+
+#: Shorter than this, a lower-case match is far more likely to be an
+#: ordinary word than the same name written carelessly.
+_MIN_VARIANT = 4
+
+
+def _other_spellings(text: str, findings: list[Finding]) -> list[Finding]:
+    """The same name written in a case nobody looked for.
+
+    Every rule above starts from a capital letter, so a surname typed in
+    lower case mid-sentence is invisible to all of them. In the mail
+    fixture, "priver benzaoui des trajets" went out in the masked copy
+    with the client's real name in it, and nothing anywhere lit up.
+
+    Once a name has been found in any spelling, its other spellings are
+    searchable: this looks for them case-insensitively and offers what it
+    finds. It offers rather than decides, because a surname can also be
+    an ordinary word, and masking every "roux" in a file that mentions a
+    Madame ROUX would wreck the text. The row says where it comes from so
+    the choice is informed.
+    """
+    # Only names something in the sentence vouched for: a civility, a
+    # company form, or the user's own declaration. Searching every
+    # capitalised candidate instead turned "Bulletin", kept as a case-law
+    # marker, into a reason to mask "bulletins de paie".
+    vouched = {f.value for f in findings if f.kind in ("name", "org", "declared")}
+    known = {
+        word
+        for value in vouched
+        for word in value.replace("'", " ").replace("’", " ").split()
+        if len(word) >= _MIN_VARIANT and not _is_excluded(word)
+    }
+    taken = [(f.start, f.end) for f in findings]
+    extra: list[Finding] = []
+
+    for value in sorted(known):
+        for match in re.finditer(rf"\b{re.escape(value)}\b", text, re.IGNORECASE):
+            if match.group(0) == value:
+                continue
+            start, end = match.span()
+            if any(start < t_end and end > t_start for t_start, t_end in taken):
+                continue
+            taken.append((start, end))
+            extra.append(Finding(
+                match.group(0), start, end, "candidate", Certainty.CONFIRM,
+                f"même nom que « {value} », écrit ici sans majuscule",
+            ))
+    return extra
 
 
 _RANK = {Certainty.CERTAIN: 0, Certainty.CASE_LAW: 1, Certainty.CONFIRM: 2}
