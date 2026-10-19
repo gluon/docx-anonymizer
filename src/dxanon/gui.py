@@ -393,11 +393,14 @@ class Window(QMainWindow):
         self.table.verticalHeader().setVisible(False)
         header = self.table.horizontalHeader()
         # The pseudonym is what the user reads and retypes before trusting
-        # the export, so it gets as much room as the value it replaces.
+        # the export, so it is sized to its own contents rather than to a
+        # share of the window. Stretching it was enough on macOS and not
+        # on Windows, where the default font is wider: "ORION INDUSTRIES
+        # DU BEAUVOIR" asked for 348 pixels and was given 273.
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.Stretch)
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(4, QHeaderView.Stretch)
         self.table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         layout.addWidget(self.table, stretch=1)
@@ -451,7 +454,15 @@ class Window(QMainWindow):
             self.table.setItem(index, 1, _cell(row.value, tip=row.value))
             self.table.setItem(index, 2, _cell(str(row.occurrences)))
             pseudonym = QTableWidgetItem(row.pseudonym)
-            pseudonym.setToolTip("Double-cliquez pour changer ce pseudonyme")
+            # The text itself goes in the tooltip, not only the hint: a
+            # column can always end up narrower than its content, on a
+            # small window or a platform whose font is wider, and this is
+            # the one column the user has to read before trusting the
+            # export.
+            pseudonym.setToolTip(
+                f"{row.pseudonym}\n\nDouble-cliquez pour changer ce pseudonyme"
+                if row.pseudonym else "Double-cliquez pour changer ce pseudonyme"
+            )
             self.table.setItem(index, 3, pseudonym)
             why = f"{CERTAINTY_LABEL[row.certainty]} — {row.why}"
             self.table.setItem(index, 4, _cell(why, tip=why))
