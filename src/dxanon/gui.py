@@ -592,13 +592,20 @@ class Window(QMainWindow):
         mapping = self._mapping()
         if mapping is None:
             return
+        if not self.return_area.toPlainText().strip():
+            _alert(
+                self, QMessageBox.Information, "Rien à restaurer",
+                "La zone est vide. Collez le texte renvoyé par l'IA, "
+                "ou ouvrez le document corrigé.",
+            )
+            return
         try:
             restored, missing = plaintext.deanonymize(
                 self.return_area.toPlainText(), mapping,
                 require_all=not self.allow_partial.isChecked(),
             )
         except RefusedExport as refused:
-            self._explain_refusal(refused)
+            self._explain_refusal(refused, mapping)
             return
         self.result_heading.setText("Texte restauré")
         self.result_area.setPlainText(restored)
@@ -625,13 +632,26 @@ class Window(QMainWindow):
             engine.deanonymize(source, destination, mapping,
                                require_all=not self.allow_partial.isChecked())
         except RefusedExport as refused:
-            self._explain_refusal(refused)
+            self._explain_refusal(refused, mapping)
             return
         self.result_heading.setText("Document restauré")
         self.result_area.setPlainText(f"Fichier écrit :\n{destination}")
         self.stack.setCurrentIndex(2)
 
-    def _explain_refusal(self, refused: RefusedExport) -> None:
+    def _explain_refusal(self, refused: RefusedExport, mapping: Mapping) -> None:
+        expected = [e for e in mapping.entries if e.pseudonym and mapping.was_used(e)]
+        if len(refused.residues) >= len(expected):
+            # Not one pseudonym came back: the AI did not reword them all,
+            # this is another text. Saying "reworded" sent the user looking
+            # for a problem that was not there.
+            _alert(
+                self, QMessageBox.Warning,
+                "Restauration refusée, rien n'a été écrit",
+                "Aucun des pseudonymes de ce cycle n'apparaît dans ce texte. "
+                "Ce n'est sans doute pas la version masquée produite par ce "
+                "cycle, ni la réponse de l'IA à son sujet.",
+            )
+            return
         _alert(
             self, QMessageBox.Critical,
             "Restauration refusée, rien n'a été écrit",

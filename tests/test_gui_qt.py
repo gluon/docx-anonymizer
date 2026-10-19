@@ -241,7 +241,47 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.at(), GRID)
         self.assertIsNone(self.window.mapping)
 
-    def test_restore_refused_when_a_pseudonym_was_reworded(self):
+    def test_restore_with_nothing_pasted_says_so(self):
+        self.to_result()
+        self.click("J'ai la réponse de l'IA, remettre les vrais noms")
+        self.answer_next_dialog()
+        self.click("Remettre les vrais noms")
+        self.assertEqual(self.seen_dialogs, ["Rien à restaurer"])
+        self.assertEqual(self.at(), RETURN)
+
+    def test_a_text_with_no_pseudonym_is_not_called_reworded(self):
+        self.to_result()
+        self.click("J'ai la réponse de l'IA, remettre les vrais noms")
+        self.window.return_area.setPlainText("Un tout autre texte.")
+        captured = []
+        original = self.gui._alert
+        self.gui._alert = lambda parent, icon, title, body: captured.append(body)
+        try:
+            self.click("Remettre les vrais noms")
+        finally:
+            self.gui._alert = original
+        self.assertEqual(len(captured), 1)
+        self.assertNotIn("reformulés", captured[0])
+        self.assertIn("Aucun des pseudonymes", captured[0])
+
+    def test_one_reworded_pseudonym_is_named(self):
+        self.to_result()
+        masked = self.window.result_area.toPlainText()
+        entry = next(e for e in self.window.mapping.entries
+                     if self.window.mapping.was_used(e) and e.pseudonym in masked)
+        self.click("J'ai la réponse de l'IA, remettre les vrais noms")
+        self.window.return_area.setPlainText(masked.replace(entry.pseudonym, "Quelqu'un"))
+        captured = []
+        original = self.gui._alert
+        self.gui._alert = lambda parent, icon, title, body: captured.append(body)
+        try:
+            self.click("Remettre les vrais noms")
+        finally:
+            self.gui._alert = original
+        self.assertIn("reformulés", captured[0])
+        self.assertIn(entry.pseudonym, captured[0])
+
+    def test_restore_of_an_unrelated_text_is_refused(self):
         self.to_result()
         self.click("J'ai la réponse de l'IA, remettre les vrais noms")
         self.window.return_area.setPlainText("Rien de ce qui a été envoyé.")
