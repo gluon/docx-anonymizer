@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 
 from . import engine, plaintext, source, workflow
 from .detect import Certainty
-from .engine import RefusedExport
+from .engine import EmptyTable, RefusedExport
 from .mapping import Mapping
 from .netguard import NetworkGuard
 from .workflow import Decision
@@ -460,6 +460,14 @@ class Window(QMainWindow):
                 shown = f"Fichier écrit :\n{destination}"
             else:
                 shown = plaintext.anonymize(self.source_text, mapping)
+        except EmptyTable:
+            _alert(
+                self, QMessageBox.Warning,
+                "Rien n'est coché, rien n'a été écrit",
+                "Sans aucune valeur à masquer, la « version anonyme » serait "
+                "l'original sous un autre nom. Cochez au moins une ligne de la grille.",
+            )
+            return
         except RefusedExport as refused:
             _alert(
                 self, QMessageBox.Critical,

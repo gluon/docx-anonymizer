@@ -8,7 +8,7 @@ same refusal check as the file mode, so the two cannot drift apart.
 
 from __future__ import annotations
 
-from .engine import RefusedExport, Residue, _replace_all
+from .engine import RefusedExport, Residue, _replace_all, refuse_empty
 from .mapping import Mapping
 
 
@@ -21,6 +21,7 @@ def anonymize(text: str, mapping: Mapping) -> str:
     first. Without that record the return trip refuses a perfectly good
     document because a pseudonym it never wrote is "missing".
     """
+    refuse_empty(mapping)
     mapping.mark_used(_applied(text, mapping.forward()))
     masked = _replace(text, mapping.forward())
 

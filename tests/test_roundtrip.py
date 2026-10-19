@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import fixtures  # noqa: E402
 from dxanon import textmap  # noqa: E402
-from dxanon.engine import RefusedExport, anonymize, deanonymize, scan  # noqa: E402
+from dxanon.engine import EmptyTable, RefusedExport, anonymize, deanonymize, scan  # noqa: E402
 from dxanon.mapping import Mapping  # noqa: E402
 from dxanon.package import Package  # noqa: E402
 
@@ -68,9 +68,17 @@ class RoundTrip(unittest.TestCase):
         self.anon = self.dir / "anon.docx"
         self.restored = self.dir / "restored.docx"
 
-    def test_nothing_to_replace_leaves_the_file_byte_identical(self):
-        anonymize(self.source, self.anon, Mapping())
+    def test_a_table_that_matches_nothing_leaves_the_file_byte_identical(self):
+        mapping = Mapping()
+        mapping.add("Personne Absente", "Autre Personne")
+        anonymize(self.source, self.anon, mapping)
         self.assertEqual(self.source.read_bytes(), self.anon.read_bytes())
+
+    def test_an_empty_table_is_refused_and_writes_nothing(self):
+        """Otherwise the original goes out named _ANON, in clear."""
+        with self.assertRaises(EmptyTable):
+            anonymize(self.source, self.anon, Mapping())
+        self.assertFalse(self.anon.exists())
 
     def test_text_survives_the_round_trip(self):
         mapping = case_mapping()

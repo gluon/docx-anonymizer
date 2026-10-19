@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from dxanon import plaintext  # noqa: E402
-from dxanon.engine import RefusedExport  # noqa: E402
+from dxanon.engine import EmptyTable, RefusedExport  # noqa: E402
 from dxanon.mapping import Mapping  # noqa: E402
 
 
@@ -66,6 +66,10 @@ class PastedText(unittest.TestCase):
         m.add("Dupont", "Moreau")
         m.add("Moreau", "Lemoine")
         self.assertTrue(m.conflicts())
+
+    def test_an_empty_table_refuses(self):
+        with self.assertRaises(EmptyTable):
+            plaintext.anonymize("Monsieur Dupont", Mapping())
 
     def test_a_surviving_real_value_refuses(self):
         m = Mapping()

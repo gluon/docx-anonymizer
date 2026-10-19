@@ -189,15 +189,15 @@ class WindowTests(unittest.TestCase):
         self.assertIsNone(self.window.mapping)
         self.assertEqual(self.window.result_area.toPlainText(), "")
 
-    @unittest.expectedFailure  # listed in the interface review, not fixed yet
-    def test_produce_with_nothing_ticked_says_so(self):
+    def test_produce_with_nothing_ticked_writes_nothing(self):
+        """An empty table would hand back the original named _ANON."""
         self.to_grid()
         for row in self.window.grid.rows:
             row.decision = self.gui.Decision.KEEP
         self.window._fill_table()
         self.answer_next_dialog()
         self.click("Produire la version anonyme")
-        self.assertEqual(self.seen_dialogs, ["Aucun élément n'est coché : rien ne serait masqué."])
+        self.assertEqual(self.seen_dialogs, ["Rien n'est coché, rien n'a été écrit"])
         self.assertEqual(self.at(), GRID)
         self.assertIsNone(self.window.mapping)
 

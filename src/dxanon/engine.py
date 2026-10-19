@@ -30,6 +30,25 @@ class RefusedExport(Exception):
         super().__init__(f"export refused, {len(residues)} residue(s): {listing}{more}")
 
 
+class EmptyTable(RefusedExport):
+    """Raised when there is nothing to mask. Nothing is written.
+
+    An empty table substitutes nothing and finds no residue, so the check
+    passes and the original goes out under a name ending in _ANON. That is
+    worse than no tool at all: the whole file is submitted in clear by
+    someone who believes it masked, on the tool's own word. So an empty
+    table is a refusal, like a residue, whatever the front end.
+    """
+
+    def __init__(self) -> None:
+        super().__init__([Residue(value="(aucune)", where="table vide : rien n'est masqué")])
+
+
+def refuse_empty(mapping: Mapping) -> None:
+    if not any(entry.real and entry.pseudonym for entry in mapping.entries):
+        raise EmptyTable()
+
+
 @dataclass(frozen=True)
 class Residue:
     value: str
@@ -47,6 +66,7 @@ class Report:
 
 
 def anonymize(source, destination, mapping: Mapping) -> Report:
+    refuse_empty(mapping)
     package = Package.open(source)
     report = _substitute(package, mapping.forward())
     report.images = [p.name for p in package.images()]
