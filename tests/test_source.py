@@ -26,7 +26,7 @@ from dxanon import engine, source, workflow  # noqa: E402
 from dxanon.package import Package  # noqa: E402
 
 #: Planted in the fixture's metadata and nowhere in its body.
-METADATA_ONLY = ("Jean Dupont", "Sylvie Marchand")
+METADATA_ONLY = ("Jean Dupont", "Sylvie Marchand", "Paul Girard")
 
 
 class ReadingADocument(unittest.TestCase):
@@ -47,6 +47,13 @@ class ReadingADocument(unittest.TestCase):
     def test_initials_are_found_too(self):
         self.assertIn("SM", self.identities)
 
+    def test_the_reviewer_list_is_read(self):
+        """people.xml: w15:author, not w:author, so it was never looked at."""
+        self.assertIn("Paul Girard", self.identities)
+
+    def test_an_address_inside_a_user_id_is_read_on_its_own(self):
+        self.assertIn("paul.girard@cabinet-girard.fr", self.identities)
+
     def test_the_file_name_is_read(self):
         """Often the most talkative part of a document."""
         self.assertIn("Dupont", self.identities)
@@ -61,7 +68,8 @@ class TheWindowsPath(unittest.TestCase):
         text, images, identities = source.read_document(self.source)
         self.grid = workflow.build(text, images=images, known=identities)
         self.destination = self.dir / "anon.docx"
-        engine.anonymize(self.source, self.destination, self.grid.to_mapping())
+        self.mapping = self.grid.to_mapping()
+        engine.anonymize(self.source, self.destination, self.mapping)
 
     def test_nothing_leaks_anywhere_in_the_package(self):
         package = Package.open(self.destination)
@@ -80,6 +88,39 @@ class TheWindowsPath(unittest.TestCase):
 
         self.assertTrue(re.search(r'w:author="[^"]+"', document))
         self.assertTrue(re.search(r'w:author="[^"]+" w:initials="[^"]+"', comments))
+
+    def test_the_reviewer_list_is_rewritten_not_dropped(self):
+        people = Package.open(self.destination).get("word/people.xml").data.decode()
+        self.assertNotIn("cabinet-girard", people)
+        self.assertEqual(len(re.findall(r'w15:author="[^"]+"', people)), 2)
+        self.assertEqual(len(re.findall(r'w15:userId="[^"]+"', people)), 2)
+
+    def test_a_document_sent_back_untouched_is_restored(self):
+        """The return trip used to demand every pseudonym in the table,
+        including those the outward trip never wrote: a short form a full
+        name had consumed, a word found only in the file name."""
+        never = [e for e in self.mapping.entries if not self.mapping.was_used(e)]
+        self.assertTrue(never, "the fixture no longer exercises the case")
+        restored = self.dir / "final.docx"
+        engine.deanonymize(self.destination, restored, self.mapping)
+        # Text, not markup, for the story parts: a name split across runs
+        # comes back in the first run, so "Jean DUP" bold + "ONT" plain
+        # returns as "Jean DUPONT" all bold. A known limit of
+        # textmap.apply, not what this test is about.
+        from lxml import etree
+        from dxanon import textmap
+        canonical = lambda data: etree.tostring(etree.fromstring(data), method="c14n")
+        original = Package.open(self.source)
+        stories = {p.name for p in original.stories()}
+        for part in Package.open(restored).parts:
+            expected = original.get(part.name).data
+            if part.name in stories:
+                self.assertEqual(textmap.full_text(textmap.parse(part.data)),
+                                 textmap.full_text(textmap.parse(expected)), part.name)
+            elif part.name.endswith((".xml", ".rels")):
+                self.assertEqual(canonical(part.data), canonical(expected), part.name)
+            else:
+                self.assertEqual(part.data, expected, part.name)
 
     def test_a_metadata_name_is_offered_as_certain(self):
         rows = {row.value: row for row in self.grid.rows}

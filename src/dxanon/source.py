@@ -20,7 +20,7 @@ import re
 from pathlib import Path
 
 from . import detect, textmap
-from .package import AUTHOR, INITIALS, PROPERTY_FIELDS, Package
+from .package import IDENTITY_ATTRIBUTES, PERSON_USER_ID, PROPERTY_FIELDS, Package
 
 #: Properties that name a person or a firm rather than describing the file.
 _NAMING_FIELDS = tuple(
@@ -58,9 +58,16 @@ def identities(package: Package, path: Path | None = None) -> list[str]:
             continue
 
         for node in root.iter():
-            # Authors and initials on comments and on every tracked change.
-            for attribute in (AUTHOR, INITIALS):
+            # Authors and initials on comments and tracked changes, and the
+            # list of reviewers Word keeps in people.xml.
+            for attribute in IDENTITY_ATTRIBUTES:
                 _add(found, node.get(attribute))
+            # A Microsoft account's userId carries an address,
+            # "S::claire.moreau@cabinet.fr::7f3a…". The whole value is
+            # masked as one; the address also goes in on its own, so that
+            # it is masked wherever else it appears.
+            for address in detect.EMAIL.findall(node.get(PERSON_USER_ID) or ""):
+                _add(found, address)
             if node.tag in _NAMING_FIELDS:
                 _add(found, node.text)
 

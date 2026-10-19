@@ -209,6 +209,28 @@ class LeavingTheHelp(unittest.TestCase):
             "more than one close button on the help page",
         )
 
+    def test_no_signal_is_wired_to_a_method_that_takes_arguments(self):
+        """clicked passes checked=False to whatever accepts a parameter.
+
+        "Effacer le cycle" was wired to _reset(confirm=True), so the click
+        arrived as confirm=False and cleared the cycle without asking.
+        Only running the window showed it; once known, the shape is easy
+        to forbid. A lambda says which arguments are meant.
+        """
+        tree = ast.parse(self.source)
+        methods = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "connect" and node.args):
+                continue
+            target = node.args[0]
+            if isinstance(target, ast.Attribute) and target.attr in methods:
+                parameters = methods[target.attr].args.args[1:]
+                self.assertEqual(
+                    parameters, [],
+                    f"line {node.lineno}: {target.attr} takes parameters a signal would fill",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

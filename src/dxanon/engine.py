@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 from . import textmap
 from .mapping import Mapping
-from .package import AUTHOR, INITIALS, PROPERTY_FIELDS, W, Package, Part
+from .package import IDENTITY_ATTRIBUTES, PROPERTY_FIELDS, W, Package, Part
 
 TEXT_SUFFIXES = (".xml", ".rels")
 INSTR_TEXT = f"{{{W}}}instrText"
@@ -82,7 +82,12 @@ def deanonymize(source, destination, mapping: Mapping, require_all: bool = True)
     """
     package = Package.open(source)
 
-    pseudonyms = [e.pseudonym for e in mapping.entries if e.pseudonym]
+    # Only what the outward trip actually wrote. anonymize records it with
+    # mark_used; this used to ignore the record and demand every entry, so
+    # a document sent back untouched was refused over a short form the full
+    # name had consumed, or a word seen only in the file name. Same rule as
+    # plaintext.deanonymize.
+    pseudonyms = [e.pseudonym for e in mapping.entries if e.pseudonym and mapping.was_used(e)]
     present = {r.value for r in scan(package, pseudonyms)}
     missing = [p for p in pseudonyms if p not in present]
 
@@ -136,7 +141,7 @@ def _substitute_runs(root, pairs: list[tuple[str, str]], used: set[str]) -> int:
 
 
 def _substitute_attributes(root, pairs: list[tuple[str, str]], used: set[str]) -> int:
-    """Authors and initials on comments and on every tracked change.
+    """Authors and initials on comments, tracked changes and people.xml.
 
     A document reviewed in-house keeps the name of each reviewer attached
     to each correction.  It shows nowhere in the body and reads perfectly
@@ -144,7 +149,7 @@ def _substitute_attributes(root, pairs: list[tuple[str, str]], used: set[str]) -
     """
     count = 0
     for node in root.iter():
-        for attribute in (AUTHOR, INITIALS):
+        for attribute in IDENTITY_ATTRIBUTES:
             value = node.get(attribute)
             if not value:
                 continue

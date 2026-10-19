@@ -234,13 +234,8 @@ class WindowTests(unittest.TestCase):
         for real in fixtures.PLANTED:
             self.assertNotIn(real.encode(), blob)
 
-    @unittest.expectedFailure
     def test_docx_comes_back_untouched_and_is_restored(self):
-        """Fails today: engine.deanonymize demands every pseudonym in the
-        table, including those that never fired (a short form consumed by
-        a longer one, a word seen only in the file name), where the
-        pasted-text mode demands only those that fired. Out of scope for
-        this branch: engine.py."""
+        """The return trip used to demand pseudonyms that never fired."""
         import tempfile
         from unittest import mock
         from PySide6.QtWidgets import QFileDialog

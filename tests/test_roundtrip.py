@@ -43,6 +43,8 @@ def case_mapping() -> Mapping:
     mapping.add("SM", "CR", kind="author")
     mapping.add("Mecanique Provencale", "Orion", kind="org")
     mapping.add("jean.dupont@example.fr", "marc.lemoine@example.fr", kind="email")
+    mapping.add("Paul Girard", "Hugo Vautrin", kind="author")
+    mapping.add("paul.girard@cabinet-girard.fr", "hugo.vautrin@example.invalid", kind="email")
     return mapping
 
 
