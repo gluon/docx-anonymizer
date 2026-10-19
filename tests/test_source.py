@@ -89,5 +89,52 @@ class TheWindowsPath(unittest.TestCase):
             self.assertEqual(rows[name].occurrences, 0)
 
 
+class NamesReadFromTheFileName(unittest.TestCase):
+    """A file name is the least reliable of the three sources.
+
+    w:author holds a person's name because Word puts one there. A file
+    name holds a person's name plus dates, version numbers and office
+    vocabulary, and taking all of it as certain made "Dossier" a name:
+    the header of "Dossier_Benzaoui.docx" came out reading "Marc
+    FORESTIER BENZAOUI".
+    """
+
+    def test_office_vocabulary_is_dropped(self):
+        words = source._from_filename(Path("Dossier_Benzaoui_Confidentiel_v3.docx"), [])
+        self.assertEqual(words, ["Benzaoui"])
+
+    def test_a_plain_case_name_still_comes_through(self):
+        self.assertIn("Vandenbroucke", source._from_filename(Path("Vandenbroucke.docx"), []))
+
+    def test_the_limit_is_stated_rather_than_hidden(self):
+        """A word no list knows is still offered as a name.
+
+        That is the grid's job to catch, not this function's, and
+        pretending otherwise would be the error that produced "Dossier".
+        """
+        words = source._from_filename(Path("Prudhommal2024_Krgzystan.docx"), [])
+        self.assertTrue(words)
+
+
+class TheOutputFileName(unittest.TestCase):
+    def test_it_goes_through_the_table(self):
+        """The refusal check reads inside the package, not its name.
+
+        "Dossier_Benzaoui.docx" came out as "Dossier_Benzaoui_ANON.docx"
+        with nothing objecting, which puts the client's name in the one
+        place a reader sees before opening anything.
+        """
+        from dxanon.cli import _masked_name
+        from dxanon.mapping import Mapping
+
+        mapping = Mapping()
+        mapping.add("Benzaoui", "Lagarde")
+        masked = _masked_name(Path("Dossier_Benzaoui.docx"), mapping)
+
+        self.assertNotIn("Benzaoui", masked)
+        self.assertIn("Lagarde", masked)
+        self.assertTrue(masked.endswith("_ANON.docx"))
+
+
 if __name__ == "__main__":
     unittest.main()

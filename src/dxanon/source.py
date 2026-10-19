@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from . import textmap
+from . import detect, textmap
 from .package import AUTHOR, INITIALS, PROPERTY_FIELDS, Package
 
 #: Properties that name a person or a firm rather than describing the file.
@@ -73,14 +73,28 @@ def _from_filename(path: Path, already: list[str]) -> list[str]:
     """Words of the file name that look like a name.
 
     "Dupont_conclusions_v3.docx" names the client in the one place a
-    reader sees before opening anything. Only capitalised words are
-    taken, and only those not already known, because the rest of the
-    name is dates, version numbers and the word "conclusions".
+    reader sees before opening anything.
+
+    Less reliable than w:author, which Word fills with a person's name:
+    a file name is also dates, version numbers and office vocabulary. So
+    the words are filtered through the same lexicon detection uses, and
+    what gets through is what no list recognises, which is the shape of
+    a proper noun. A generic word the lexicon does not know will still
+    get through and be offered as a name; the grid is where that is
+    caught.
     """
     taken: list[str] = []
     for word in _FILENAME_SPLIT.split(path.stem):
-        if len(word) > 2 and word[:1].isupper() and word not in already:
-            taken.append(word)
+        if len(word) <= 2 or not word[:1].isupper() or word in already:
+            continue
+        # "Dossier_Benzaoui_Confidentiel.docx" is three capitalised words
+        # and one name. Without this, "Dossier" entered the table as a
+        # certain name and the header came out reading "Marc FORESTIER
+        # BENZAOUI". The lexicon already knows the vocabulary a case file
+        # is named with; it is the same list detection uses.
+        if detect._is_excluded(word):
+            continue
+        taken.append(word)
     return taken
 
 

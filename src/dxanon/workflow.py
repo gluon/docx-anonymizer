@@ -220,7 +220,9 @@ _PLACE_BEFORE = re.compile(
     re.IGNORECASE,
 )
 _ORG_BEFORE = re.compile(
-    r"\b(?:SAS|SASU|SARL|EURL|SA|SCI|SNC|SCOP|SCP|SELARL|GIE|soci[ée]t[ée]|Ste|St[ée]|entreprise|groupe)\s+$",
+    r"\b(?:SAS|SASU|SARL|EURL|SA|SCI|SNC|SCOP|SCP|SELARL|GIE|soci[ée]t[ée]|Ste|St[ée]|"
+    r"entreprise|groupe|cabinet|[ée]tude|association|f[ée]d[ée]ration|syndicat|"
+    r"union|mutuelle|caisse|agence|service)\s+$",
     re.IGNORECASE,
 )
 _FEMININE_BEFORE = re.compile(r"\b(?:Madame|Mme|Mademoiselle|Mlle)\s+$")

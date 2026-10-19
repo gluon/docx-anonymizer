@@ -113,7 +113,7 @@ def _roundtrip(args) -> int:
     """Mask and restore in one invocation, and say whether anything moved."""
     text, images, known = _read_any(args.source)
     mapping = workflow.build(text, images=images, known=known).to_mapping()
-    destination = args.destination or args.source.with_name(f"{args.source.stem}_ANON{args.source.suffix}")
+    destination = args.destination or args.source.with_name(_masked_name(args.source, mapping))
 
     try:
         if args.source.suffix.lower() == ".docx":
@@ -135,6 +135,20 @@ def _roundtrip(args) -> int:
     print(f"{len(mapping.entries)} correspondance(s)")
     print("aller-retour exact :", "oui" if same else "NON")
     return 0 if same else 1
+
+
+def _masked_name(path: Path, mapping) -> str:
+    """The output file name, masked like everything else.
+
+    "Dossier_Benzaoui.docx" came out as "Dossier_Benzaoui_ANON.docx".
+    The refusal check reads what is inside the package, not what the
+    package is called, so it had nothing to say: the client's name left
+    the office in the one place a reader sees before opening anything.
+    """
+    from .engine import _replace_all
+
+    stem = _replace_all(path.stem, mapping.forward())
+    return f"{stem}_ANON{path.suffix}"
 
 
 def _read_any(path: Path) -> tuple[str, list[str], list[str]]:

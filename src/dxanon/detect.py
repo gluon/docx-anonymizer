@@ -266,6 +266,10 @@ DOCUMENT_FURNITURE = frozenset(
     PIECES PIÈCES BORDEREAU PRODUCTION DEBATS DÉBATS DEMANDES PRETENTIONS
     PRÉTENTIONS MOYENS EXPOSE EXPOSÉ PROCEDURE PROCÉDURE HISTORIQUE
     RCS SIRET SIREN IBAN BIC TVA URSSAF SMIC
+    Confidentiel Confidentielle Copie Original Brouillon Version Final Finale
+    Projet Note Memo Mémo Fiche Synthese Synthèse Rapport Compte Rendu
+    Document Documents Lettre Courriel Annexe Annexes Extrait Extraits
+    Cabinet Etude Étude Selarl Scp Barreau Ordre Batonnier Bâtonnier
     Telephone Téléphone Portable Fax Courriel Mail Adresse Email
     Reference Référence Dossier Affaire Numero Numéro
     Ancien Ancienne Nouveau Nouvelle Present Présent Presente Présente
