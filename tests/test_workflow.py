@@ -209,5 +209,38 @@ class PseudonymsMustNotOverlap(unittest.TestCase):
                 )
 
 
+class AFirmNamedAfterItsLawyer(unittest.TestCase):
+    """The long form decides what a subject is, and decides alone.
+
+    "Cabinet Moreau" and "Claire Moreau" share a surname, as a firm and
+    its founder do. Letting the short form "Moreau" vote made the whole
+    group an organisation, so the lawyer came out as "Orion Industries"
+    and the footer read "Orion Industries, avocate".
+    """
+
+    TEXT = ("Le Cabinet Moreau vous ecrit. Claire Moreau, avocate, suit "
+            "le dossier. Moreau confirme.")
+
+    def test_the_lawyer_gets_a_person_name(self):
+        rows = {r.value: r for r in workflow.build(self.TEXT).rows}
+        self.assertEqual(len(rows["Claire Moreau"].pseudonym.split()), 2)
+        self.assertEqual(
+            rows["Moreau"].pseudonym,
+            rows["Claire Moreau"].pseudonym.split()[-1],
+            "the firm and the lawyer must share one surname",
+        )
+
+    def test_a_company_is_still_a_company(self):
+        """The rule must not cost the case it was built for."""
+        rows = {r.value: r for r in workflow.build("La SAS Mecanique Provencale conteste.").rows}
+        pseudonym = rows["Mecanique Provencale"].pseudonym
+        self.assertNotIn(pseudonym.split()[0], ("Marc", "Claire", "Fabrice", "Nadia"))
+
+    def test_a_long_company_name_is_still_a_company(self):
+        text = "embauche par la societe TRANSPORTS FRIGORIFIQUES DU LITTORAL, dont le siege"
+        rows = {r.value: r for r in workflow.build(text).rows}
+        self.assertGreater(len(rows["TRANSPORTS FRIGORIFIQUES DU LITTORAL"].pseudonym.split()), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

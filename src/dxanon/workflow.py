@@ -237,6 +237,20 @@ def _kind_for_group(members: list[Row], text: str) -> str:
     preceded by nothing in particular. Voting per row let the majority of
     silent mentions win and handed a haulage company a person's name.
     """
+    # The longest spelling decides, and it decides alone. A short form is
+    # ambiguous by nature: "Moreau" is preceded by "Cabinet" in one line
+    # and names the lawyer in the next, and letting it vote turned
+    # "Claire Moreau" into "Orion Industries", so the footer read "Orion
+    # Industries, avocate". The long form carries the information.
+    longest = max(members, key=lambda r: len(_tokens(r.value)))
+    if len(_tokens(longest.value)) > 1:
+        explicit = _kind_from_context(longest.value, text)
+        # Silence on the long form means a person: that is the common
+        # case, and a person's name still reads correctly after
+        # "Cabinet", where a company name does not read at all before
+        # "avocate".
+        return explicit or "name"
+
     votes: dict[str, int] = {}
     for member in members:
         kind = _kind_from_context(member.value, text)
