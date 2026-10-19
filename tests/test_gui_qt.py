@@ -290,7 +290,42 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.seen_dialogs, ["Restauration refusée, rien n'a été écrit"])
         self.assertEqual(self.at(), RETURN)
 
+    def test_analyser_on_an_empty_area_says_so(self):
+        self.click("Coller du texte")
+        self.answer_next_dialog()
+        self.click("Analyser")
+        self.assertEqual(self.seen_dialogs, ["Rien à analyser"])
+        self.assertEqual(self.at(), HOME)
+
+    def test_after_a_restoration_the_buttons_say_what_is_left(self):
+        self.to_result()
+        masked = self.window.result_area.toPlainText()
+        self.click("J'ai la réponse de l'IA, remettre les vrais noms")
+        self.window.return_area.setPlainText(masked)
+        self.click("Remettre les vrais noms")
+        self.assertEqual(self.at(), RESULT)
+        self.button("Restaurer une autre réponse")
+        self.button("Terminer, effacer le cycle")
+        self.click("Restaurer une autre réponse")
+        self.assertEqual(self.at(), RETURN)
+
     # --------------------------------------------------------------- docx
+    def test_with_a_file_the_result_opens_its_folder(self):
+        import tempfile
+        from unittest import mock
+        from PySide6.QtGui import QDesktopServices
+        from PySide6.QtWidgets import QFileDialog
+        import fixtures
+
+        folder = Path(tempfile.mkdtemp())
+        source = fixtures.build(folder / "Dossier_Dupont.docx")
+        with mock.patch.object(QFileDialog, "getOpenFileName", return_value=(str(source), "")):
+            self.click("Ouvrir un document Word")
+        self.click("Produire la version anonyme")
+        with mock.patch.object(QDesktopServices, "openUrl") as opened:
+            self.click("Ouvrir le dossier")
+        self.assertEqual(Path(opened.call_args[0][0].toLocalFile()), folder)
+
     def test_docx_export_through_the_window_keeps_the_name_out(self):
         import tempfile
         import zipfile

@@ -14,14 +14,14 @@ import sys
 from pathlib import Path
 
 from PySide6 import QtGui
-from PySide6.QtCore import QEvent, Qt
+from PySide6.QtCore import QEvent, Qt, QUrl
 # QCloseEvent is imported for its side effect as much as for the type hint.
 # PySide creates a wrapper type lazily, the first time Python touches it.
 # For QCloseEvent that first time used to be inside closeEvent, while macOS
 # was terminating the application, and a crash report shows a segfault in
 # exactly that lazy initialisation. Naming the type here creates it when
 # the module loads. _check_event_types proves it did.
-from PySide6.QtGui import QCloseEvent, QFont, QKeySequence, QShortcut
+from PySide6.QtGui import QCloseEvent, QDesktopServices, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QFileDialog, QHBoxLayout, QHeaderView,
     QLabel, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QSizePolicy,
@@ -128,6 +128,8 @@ class Window(QMainWindow):
         self.mapping: Mapping | None = None
         #: The screen the return page goes back to.
         self._return_from = 0
+        #: The file the result screen shows, when it shows one.
+        self.result_file: Path | None = None
 
         self.setWindowTitle("Anonymiseur de documents")
         self.resize(1100, 740)
@@ -351,6 +353,8 @@ class Window(QMainWindow):
     def _analyse_text(self) -> None:
         text = self.paste_area.toPlainText().strip()
         if not text:
+            _alert(self, QMessageBox.Information, "Rien à analyser",
+                   "La zone est vide. Collez-y le texte à anonymiser.")
             return
         if not self._may_start_over():
             return
@@ -469,13 +473,13 @@ class Window(QMainWindow):
         layout.addWidget(self.result_area, stretch=1)
 
         row = QHBoxLayout()
-        copy = QPushButton("Copier")
+        self.copy_button = copy = QPushButton("Copier")
         copy.clicked.connect(self._copy_result)
-        restart = QPushButton("Effacer le cycle")
+        self.restart_button = restart = QPushButton("Effacer le cycle")
         # Not connect(self._reset): clicked passes checked=False, which
         # landed in ``confirm`` and cleared the cycle without asking.
         restart.clicked.connect(lambda: self._reset())
-        done = QPushButton("J'ai la réponse de l'IA, remettre les vrais noms")
+        self.done_button = done = QPushButton("J'ai la réponse de l'IA, remettre les vrais noms")
         done.setMinimumHeight(40)
         done.clicked.connect(self._open_return)
         done.setDefault(True)
@@ -486,7 +490,31 @@ class Window(QMainWindow):
         layout.addLayout(row)
         return page
 
+    def _show_result(self, heading: str, text: str = "", written: Path | None = None,
+                     restored: bool = False) -> None:
+        """One screen, two moments: after masking, and after restoring.
+
+        After a restoration it kept offering "J'ai la réponse de l'IA" and
+        "Effacer le cycle" as if nothing had happened. And with a file,
+        "Copier" put the sentence "Fichier écrit : /chemin…" on the
+        clipboard, which nobody can use: the button opens the folder then.
+        """
+        self.result_file = written
+        self.result_heading.setText(heading)
+        self.result_area.setPlainText(f"Fichier écrit :\n{written}" if written else text)
+        self.copy_button.setText("Ouvrir le dossier" if written else "Copier")
+        if restored:
+            self.done_button.setText("Restaurer une autre réponse")
+            self.restart_button.setText("Terminer, effacer le cycle")
+        else:
+            self.done_button.setText("J'ai la réponse de l'IA, remettre les vrais noms")
+            self.restart_button.setText("Effacer le cycle")
+        self.stack.setCurrentIndex(2)
+
     def _copy_result(self) -> None:
+        if self.result_file is not None:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.result_file.parent)))
+            return
         QApplication.clipboard().setText(self.result_area.toPlainText())
 
     def _run(self) -> None:
@@ -504,9 +532,9 @@ class Window(QMainWindow):
                 destination = _unused(self.source_file.with_name(
                     f"{_masked_stem(self.source_file.stem, mapping)}_ANON.docx"))
                 engine.anonymize(self.source_file, destination, mapping)
-                shown = f"Fichier écrit :\n{destination}"
+                shown, written = "", destination
             else:
-                shown = plaintext.anonymize(self.source_text, mapping)
+                shown, written = plaintext.anonymize(self.source_text, mapping), None
         except EmptyTable:
             _alert(
                 self, QMessageBox.Warning,
@@ -526,10 +554,8 @@ class Window(QMainWindow):
 
         self.mapping = mapping
         self._refresh_cycle()
-        self.result_heading.setText("Version anonyme — à soumettre à l'IA")
-        self.result_area.setPlainText(shown)
         self._refresh_network_label()
-        self.stack.setCurrentIndex(2)
+        self._show_result("Version anonyme — à soumettre à l'IA", shown, written)
 
     # ------------------------------------------------------------- return
     def _build_return(self) -> QWidget:
@@ -607,14 +633,12 @@ class Window(QMainWindow):
         except RefusedExport as refused:
             self._explain_refusal(refused, mapping)
             return
-        self.result_heading.setText("Texte restauré")
-        self.result_area.setPlainText(restored)
+        self._show_result("Texte restauré", restored, restored=True)
         if missing:
             _alert(
                 self, QMessageBox.Information, "Restauration partielle",
                 "Non restaurés :\n" + "\n".join(f"• {v}" for v in missing[:12]),
             )
-        self.stack.setCurrentIndex(2)
 
     def _restore_file(self) -> None:
         mapping = self._mapping()
@@ -634,9 +658,7 @@ class Window(QMainWindow):
         except RefusedExport as refused:
             self._explain_refusal(refused, mapping)
             return
-        self.result_heading.setText("Document restauré")
-        self.result_area.setPlainText(f"Fichier écrit :\n{destination}")
-        self.stack.setCurrentIndex(2)
+        self._show_result("Document restauré", written=destination, restored=True)
 
     def _explain_refusal(self, refused: RefusedExport, mapping: Mapping) -> None:
         expected = [e for e in mapping.entries if e.pseudonym and mapping.was_used(e)]
@@ -696,6 +718,7 @@ class Window(QMainWindow):
         self.paste_area.setVisible(False)
         self.analyse_button.setVisible(False)
         self.result_area.clear()
+        self.result_file = None
         self.return_area.clear()
         self.allow_partial.setChecked(False)
         self.table.setRowCount(0)
