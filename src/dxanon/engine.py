@@ -284,7 +284,7 @@ def scan(package: Package, values: list[str]) -> list[Residue]:
 
     for part in package.parts:
         for value in wanted:
-            if value in part.name:
+            if _occurs(value, part.name):
                 found.append(Residue(value=value, where=f"entry name {part.name}"))
 
         if not part.name.endswith(TEXT_SUFFIXES):
@@ -293,10 +293,34 @@ def scan(package: Package, values: list[str]) -> list[Residue]:
         haystacks = _haystacks(part, part.name in stories)
         for value in wanted:
             for label, haystack in haystacks:
-                if value in haystack:
+                if _occurs(value, haystack):
                     found.append(Residue(value=value, where=f"{part.name} ({label})"))
                     break
     return found
+
+
+_WORD_EDGE = re.compile(r"\w")
+
+
+def _occurs(value: str, haystack: str) -> bool:
+    """Whether ``value`` is really in ``haystack``, or only inside a word.
+
+    A plain substring search reports "Industrie" inside "Industries". The
+    second is not the first: it was an invented company name, and the
+    export of a perfectly clean document was refused because of it. A
+    word-boundary search answers the question that was always meant,
+    namely whether the real value is readable in the output.
+
+    Boundaries are only asked for where they exist. An IBAN or an address
+    starts and ends with a word character, but a value such as "(Dupont)"
+    does not, and ``\\b`` there would never match.
+    """
+    pattern = re.escape(value)
+    if _WORD_EDGE.match(value[0]):
+        pattern = r"\b" + pattern
+    if _WORD_EDGE.match(value[-1]):
+        pattern = pattern + r"\b"
+    return re.search(pattern, haystack) is not None
 
 
 def _haystacks(part: Part, is_story: bool) -> list[tuple[str, str]]:

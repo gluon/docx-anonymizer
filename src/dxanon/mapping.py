@@ -13,6 +13,7 @@ real names are gone, which the window says before it happens.
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from dataclasses import dataclass
 
@@ -97,7 +98,7 @@ class Mapping:
                 )
                 continue
             for real in reals:
-                if real != entry.real and real in entry.pseudonym:
+                if real != entry.real and _contains(entry.pseudonym, real):
                     problems.append(
                         f"le pseudonyme « {entry.pseudonym} » contient « {real} », "
                         "qui doit être masqué"
@@ -112,6 +113,22 @@ class Mapping:
         reliably: restoring it would rewrite text that was never masked.
         """
         return [e for e in self.entries if e.pseudonym and e.pseudonym in text]
+
+
+def _contains(pseudonym: str, real: str) -> bool:
+    """Whether a pseudonym really shows a value that must be masked.
+
+    Word by word, and deliberately the same rule as the export check in
+    :func:`dxanon.engine.scan`. When the two disagreed, the table warned
+    about "Orion Industries" holding "Industrie" and the export refused
+    on the same grounds, both of them on a word that was not a name.
+    """
+    pattern = re.escape(real)
+    if real[:1].isalnum():
+        pattern = r"\b" + pattern
+    if real[-1:].isalnum():
+        pattern = pattern + r"\b"
+    return re.search(pattern, pseudonym) is not None
 
 
 def _ordered(pairs) -> list[tuple[str, str]]:
