@@ -66,15 +66,25 @@ jobs:
           --paths src
           --collect-submodules dxanon
           --hidden-import lxml._elementpath
-          src/dxanon/__main__.py
+          anonymiseur.py
 
       - name: Check the executable starts
         # Not a functional test: it proves the bundle is complete, which
         # is where one-file builds fail. A missing hidden import shows up
         # only at runtime, on the user's machine, as a window that never
         # opens.
+        #
+        # Bounded in time, because a --windowed build reports a fatal
+        # startup error in a message box that waits for a click: without
+        # a timeout the step hangs until the job's own six-hour limit,
+        # and says nothing about why.
+        timeout-minutes: 5
         run: |
-          $p = Start-Process -FilePath dist\Anonymiseur.exe -ArgumentList '--self-check' -PassThru -Wait
+          $p = Start-Process -FilePath dist\Anonymiseur.exe -ArgumentList '--self-check' -PassThru
+          if (-not $p.WaitForExit(120000)) {
+            $p.Kill()
+            throw "the executable did not exit within 2 minutes: it is most likely showing a startup error box"
+          }
           if ($p.ExitCode -ne 0) { throw "the executable exited with $($p.ExitCode)" }
 
       - uses: actions/upload-artifact@v4
