@@ -454,8 +454,8 @@ class Window(QMainWindow):
         mapping = self.grid.to_mapping()
         try:
             if self.source_file is not None:
-                destination = self.source_file.with_name(
-                    f"{_masked_stem(self.source_file.stem, mapping)}_ANON.docx")
+                destination = _unused(self.source_file.with_name(
+                    f"{_masked_stem(self.source_file.stem, mapping)}_ANON.docx"))
                 engine.anonymize(self.source_file, destination, mapping)
                 shown = f"Fichier écrit :\n{destination}"
             else:
@@ -558,7 +558,7 @@ class Window(QMainWindow):
             return
         source = Path(chosen)
         stem = _restored_stem(source.stem.replace("_ANON", ""), mapping)
-        destination = source.with_name(f"{stem}_FINAL.docx")
+        destination = _unused(source.with_name(f"{stem}_FINAL.docx"))
         try:
             engine.deanonymize(source, destination, mapping,
                                require_all=not self.allow_partial.isChecked())
@@ -692,6 +692,21 @@ def _masked_stem(stem: str, mapping: Mapping) -> str:
         return plaintext.anonymize(stem, Mapping(mapping.entries))
     except RefusedExport:
         return "document"
+
+
+def _unused(path: Path) -> Path:
+    """``path``, or the first ``name_2``, ``name_3``… that does not exist.
+
+    The tool writes next to the document, under names it chooses, and
+    the file already there may be the one that just came back from the
+    AI, saved under the same name, existing nowhere else. A question
+    would be clicked through; a new name costs nothing.
+    """
+    candidate, number = path, 2
+    while candidate.exists():
+        candidate = path.with_name(f"{path.stem}_{number}{path.suffix}")
+        number += 1
+    return candidate
 
 
 def _restored_stem(stem: str, mapping: Mapping) -> str:

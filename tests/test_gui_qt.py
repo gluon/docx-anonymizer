@@ -234,6 +234,28 @@ class WindowTests(unittest.TestCase):
         for real in fixtures.PLANTED:
             self.assertNotIn(real.encode(), blob)
 
+    def test_an_existing_file_is_never_overwritten(self):
+        """The _ANON file there may be the one just back from the AI."""
+        import tempfile
+        from unittest import mock
+        from PySide6.QtWidgets import QFileDialog
+        import fixtures
+
+        folder = Path(tempfile.mkdtemp())
+        source = fixtures.build(folder / "Dossier_Dupont.docx")
+        for _ in range(2):
+            self.window._reset(confirm=False)
+            with mock.patch.object(QFileDialog, "getOpenFileName", return_value=(str(source), "")):
+                self.click("Ouvrir un document Word")
+            first = sorted(folder.glob("*_ANON*.docx"))
+            if first:
+                first[0].write_bytes(b"revenu de l'IA")
+            self.click("Produire la version anonyme")
+        written = sorted(p.name for p in folder.glob("*_ANON*.docx"))
+        self.assertEqual(len(written), 2, written)
+        self.assertEqual((folder / written[0]).read_bytes(), b"revenu de l'IA")
+        self.assertIn(written[1], self.window.result_area.toPlainText())
+
     def test_docx_comes_back_untouched_and_is_restored(self):
         """The return trip used to demand pseudonyms that never fired."""
         import tempfile
