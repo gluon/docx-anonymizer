@@ -139,6 +139,46 @@ class WindowTests(unittest.TestCase):
         self.click("Reprendre, et remettre les vrais noms")
         self.assertEqual(self.at(), RETURN)
 
+    def test_the_return_screen_can_be_left(self):
+        self.to_result()
+        for origin, button in ((RESULT, "J'ai la réponse de l'IA, remettre les vrais noms"),
+                               (HOME, "Reprendre, et remettre les vrais noms")):
+            with self.subTest(origin=origin):
+                self.window.stack.setCurrentIndex(origin)
+                self.click(button)
+                self.assertEqual(self.at(), RETURN)
+                self.click("Retour")
+                self.assertEqual(self.at(), origin)
+
+    # ----------------------------------------------------------- keyboard
+    def tab_from(self, widget):
+        widget.setFocus()
+        QTest.keyClick(widget, Qt.Key_Tab)
+        return QApplication.focusWidget()
+
+    def test_tab_leaves_the_paste_area_for_analyser(self):
+        self.click("Coller du texte")
+        self.assertIs(self.tab_from(self.window.paste_area), self.window.analyse_button)
+        self.assertEqual(self.window.paste_area.toPlainText(), "")
+
+    def test_tab_leaves_the_grid_for_produire(self):
+        self.to_grid()
+        self.assertEqual(self.tab_from(self.window.table).text(), "Produire la version anonyme")
+
+    def test_tab_leaves_the_return_area_for_remettre(self):
+        self.to_result()
+        self.click("J'ai la réponse de l'IA, remettre les vrais noms")
+        self.assertEqual(self.tab_from(self.window.return_area).text(), "Remettre les vrais noms")
+
+    def test_each_screen_shows_one_main_button(self):
+        expected = {HOME: "Analyser", GRID: "Produire la version anonyme",
+                    RESULT: "J'ai la réponse de l'IA, remettre les vrais noms",
+                    RETURN: "Remettre les vrais noms"}
+        for screen, label in expected.items():
+            page = self.window.stack.widget(screen)
+            defaults = [b.text() for b in page.findChildren(QPushButton) if b.isDefault()]
+            self.assertEqual(defaults, [label], screen)
+
     # --------------------------------------------------------------- help
     def test_help_opens_and_closes_from_every_screen(self):
         self.to_result()  # so that every screen has something to show

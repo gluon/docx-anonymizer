@@ -126,6 +126,8 @@ class Window(QMainWindow):
         #: been written. Closing the window loses the cycle, which is
         #: said on screen rather than discovered.
         self.mapping: Mapping | None = None
+        #: The screen the return page goes back to.
+        self._return_from = 0
 
         self.setWindowTitle("Anonymiseur de documents")
         self.resize(1100, 740)
@@ -252,15 +254,19 @@ class Window(QMainWindow):
         layout.addWidget(self.cycle_label)
 
         self.resume_button = QPushButton("Reprendre, et remettre les vrais noms")
-        self.resume_button.clicked.connect(lambda: self.stack.setCurrentIndex(3))
+        self.resume_button.clicked.connect(self._open_return)
         layout.addWidget(self.resume_button)
 
         self.paste_area = QPlainTextEdit()
+        # Tab leaves the area instead of typing a tab: otherwise the
+        # keyboard can never reach the button under it.
+        self.paste_area.setTabChangesFocus(True)
         self.paste_area.setPlaceholderText("Collez ici le texte à anonymiser…")
         self.paste_area.setVisible(False)
         layout.addWidget(self.paste_area, stretch=1)
 
         self.analyse_button = QPushButton("Analyser")
+        self.analyse_button.setDefault(True)
         self.analyse_button.setVisible(False)
         self.analyse_button.clicked.connect(self._analyse_text)
         layout.addWidget(self.analyse_button)
@@ -368,6 +374,8 @@ class Window(QMainWindow):
         layout.addWidget(self.grid_hint)
 
         self.table = QTableWidget(0, 5)
+        # Tab leaves the table; the arrows still move between cells.
+        self.table.setTabKeyNavigation(False)
         self.table.setHorizontalHeaderLabels(
             ["Masquer", "Valeur trouvée", "Occurrences", "Remplacée par", "Pourquoi"]
         )
@@ -394,10 +402,13 @@ class Window(QMainWindow):
         run = QPushButton("Produire la version anonyme")
         run.setMinimumHeight(40)
         run.clicked.connect(self._run)
+        run.setDefault(True)
         row.addWidget(back)
         row.addStretch()
         row.addWidget(run)
         layout.addLayout(row)
+        QWidget.setTabOrder(self.table, run)
+        QWidget.setTabOrder(run, back)
         return page
 
     def _open_grid(self, label: str, images: list[str] | None = None,
@@ -454,6 +465,7 @@ class Window(QMainWindow):
 
         self.result_area = QPlainTextEdit()
         self.result_area.setReadOnly(True)
+        self.result_area.setTabChangesFocus(True)
         layout.addWidget(self.result_area, stretch=1)
 
         row = QHBoxLayout()
@@ -465,7 +477,8 @@ class Window(QMainWindow):
         restart.clicked.connect(lambda: self._reset())
         done = QPushButton("J'ai la réponse de l'IA, remettre les vrais noms")
         done.setMinimumHeight(40)
-        done.clicked.connect(lambda: self.stack.setCurrentIndex(3))
+        done.clicked.connect(self._open_return)
+        done.setDefault(True)
         row.addWidget(copy)
         row.addWidget(restart)
         row.addStretch()
@@ -530,22 +543,37 @@ class Window(QMainWindow):
         layout.addWidget(QLabel("Collez le texte corrigé, ou ouvrez le document corrigé."))
 
         self.return_area = QPlainTextEdit()
+        self.return_area.setTabChangesFocus(True)
         layout.addWidget(self.return_area, stretch=1)
 
         self.allow_partial = QCheckBox("Ce n'est qu'un extrait du texte masqué")
         layout.addWidget(self.allow_partial)
 
         row = QHBoxLayout()
+        # The only screen without a way back: reached by mistake, it could
+        # be left only by starting a restoration or through the help.
+        back = QPushButton("Retour")
+        back.clicked.connect(lambda: self.stack.setCurrentIndex(self._return_from))
         open_file = QPushButton("Ouvrir un document corrigé")
         open_file.clicked.connect(self._restore_file)
         restore = QPushButton("Remettre les vrais noms")
         restore.setMinimumHeight(40)
         restore.clicked.connect(self._restore_text)
+        restore.setDefault(True)
+        row.addWidget(back)
         row.addWidget(open_file)
         row.addStretch()
         row.addWidget(restore)
         layout.addLayout(row)
+        QWidget.setTabOrder(self.return_area, restore)
+        QWidget.setTabOrder(restore, open_file)
+        QWidget.setTabOrder(open_file, self.allow_partial)
+        QWidget.setTabOrder(self.allow_partial, back)
         return page
+
+    def _open_return(self) -> None:
+        self._return_from = self.stack.currentIndex()
+        self.stack.setCurrentIndex(3)
 
     def _mapping(self) -> Mapping | None:
         if self.mapping is None:
