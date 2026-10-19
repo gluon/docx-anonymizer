@@ -56,6 +56,12 @@ EMAIL = re.compile(r"\b[\w.%+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
 PHONE_FR = re.compile(r"(?:\+33[\s.-]?|\b0)[1-9](?:[\s.-]?\d{2}){4}\b")
 PLATE = re.compile(r"\b[A-Z]{2}-\d{3}-[A-Z]{2}\b")
 
+#: A file or staff reference: letters and digits joined by hyphens, in
+#: either order. ``AL-2025-77412`` and ``4471-C`` identify a person as
+#: surely as a name does, and both used to surface as a bare capitalised
+#: fragment ("AL") that the grid could only read as a name.
+REFERENCE = re.compile(r"\b(?:[A-Z]{1,5}-\d{2,8}(?:-\d{1,8})*|\d{3,8}-[A-Z]{1,4})\b")
+
 #: A date of birth, taken only where its context says that is what it is.
 #: Dates are everywhere in a case file; detecting them all would bury the
 #: grid, so only the ones announced as a birth date are reported.
@@ -147,6 +153,7 @@ CHECKED = (
     ("email", EMAIL, lambda m: True, "adresse électronique"),
     ("phone", PHONE_FR, lambda m: True, "numéro de téléphone français"),
     ("plate", PLATE, lambda m: True, "immatriculation"),
+    ("reference", REFERENCE, lambda m: True, "référence de dossier ou de matricule"),
 )
 
 #: Formats carrying a check digit, and the words to describe them when it
@@ -160,11 +167,27 @@ _KEYED = {
 
 #: Same certainty tier, but the value is a capture group rather than the
 #: whole match: "né le 12 mars 1978" reports the date, not the verb.
+#: The last field says whether the captured text needs its tail cleaned
+#: up: a street line does, a postcode line must not, since its town is
+#: half of what makes the pair worth masking.
 CHECKED_GROUPS = (
-    ("birth_date", BIRTH_DATE, "date de naissance, annoncée comme telle"),
-    ("address", STREET, "adresse postale"),
-    ("address", POSTCODE_TOWN, "code postal et commune"),
+    ("birth_date", BIRTH_DATE, "date de naissance, annoncée comme telle", False),
+    ("address", STREET, "adresse postale", True),
+    ("address", POSTCODE_TOWN, "code postal et commune", False),
 )
+
+#: A street line ends at its street name. The regex stops at a comma or a
+#: line break, which leaves two kinds of debris: the full stop closing the
+#: sentence, and the town announced by "à". Both were showing up inside
+#: the value, so the grid offered "14 rue Edouard Delanglade." with its
+#: period and "8 chemin de la Nerthe a Marseille" with the town swallowed,
+#: and the town then had no row of its own.
+_ADDRESS_PUNCTUATION = re.compile(r"[\s.,;:]+$")
+_ADDRESS_TOWN = re.compile(r"\s+[aà]\s+[A-ZÀ-Ý][\wà-ÿ'’-]*$")
+
+
+def _trim_address(value: str) -> str:
+    return _ADDRESS_PUNCTUATION.sub("", _ADDRESS_TOWN.sub("", _ADDRESS_PUNCTUATION.sub("", value)))
 
 
 # --------------------------------------------------------------------------
@@ -306,6 +329,53 @@ CORRESPONDENCE = frozenset(
     """.split()
 )
 
+#: Abbreviated civilities. The long forms were already here, the short
+#: ones were not, so "Mme Lenoir" read as a first name and a surname and
+#: the masked text said "Romain Mercier" where it should have said "Mme
+#: Mercier". ``Me`` is the abbreviation of ``Maître``; as a capitalised
+#: standalone word it is never anything else.
+CIVILITY_WORDS = frozenset(
+    w.upper() for w in "Mme Mmes Mlle Mlles MM Me Mes Dr Drs Pr Prs Mgr".split()
+)
+
+#: Job titles and the ordinary nouns of an employment file. Measured on a
+#: set of conclusions and a mail thread: every one of these took a row,
+#: and a row the reader has to think about costs more than it saves.
+#: "Chef" and "Fondement" were table headings; "Dommages-intérêts" is one
+#: hyphenated token, so it has to be listed as one.
+OCCUPATIONS = frozenset(
+    w.upper() for w in """
+    Chef Cheffe Assistant Assistante Secretaire Secrétaire Juriste Stagiaire
+    Collaborateur Collaboratrice Clerc Huissier Commissaire Expert Experte
+    Greffier Greffiere Greffière Notaire Mediateur Médiateur Conciliateur
+    Directeur Directrice Responsable Gerant Gérant Gerante Gérante
+    Technicien Technicienne Ouvrier Ouvriere Ouvrière Employe Employé
+    Employee Employée Cadre Agent Charge Chargé Chargee Chargée Avocate
+    Mandataire Liquidateur Administrateur Comptable Ingenieur Ingénieur
+    Fondement Montant Decompte Décompte Rendement Insuffisance
+    Professionnel Professionnelle Reserve Reserves Réserves Aptitude
+    Alerte Signalement Signalements Convocation Production Releve Relevé
+    Releves Relevés Moyenne Perte Pertes Revenu Revenus Virement Matricule
+    Portabilite Portabilité Mutuelle Caisse Atelier Ateliers Equipe Équipe
+    Poste Postes Direction Siege Siège Succursale Agence Etablissement
+    Établissement Industrie Industries Industriel Industrielle
+    Dommages-interets Dommages-intérêts Interets Intérêts Dommages
+    Pole Pôle CPC CPH Climat Cadence Cadences Preuve Preuves Charge
+    """.split()
+)
+
+#: Question openers of a letter, which are capitalised and hyphenated and
+#: therefore read as one capitalised token: "Pouvez-vous" was offered as a
+#: name and masked into "Sabine", so the sentence came back as "Sabine
+#: verifier auprès de...".
+QUESTION_OPENERS = frozenset(
+    w.upper() for w in """
+    Pouvez-vous Pourriez-vous Auriez-vous Avez-vous Seriez-vous Serait-il
+    Est-il Est-ce Faut-il Peut-on Pensez-vous Savez-vous Voulez-vous
+    Confirmez-vous Merci-de Peux-tu Peut-elle Peut-il
+    """.split()
+)
+
 #: Roman numerals number the sections of a pleading: I, II, III, IV.
 ROMAN = re.compile(r"^[IVXLCDM]{1,7}$")
 
@@ -353,8 +423,33 @@ def case_law_zones(text: str) -> list[tuple[int, int]]:
     zones: list[tuple[int, int]] = []
     for marker in CASE_LAW_MARKERS:
         for match in re.finditer(marker, text):
-            zones.append((match.start(), _end_of_citation(text, match.end())))
+            zones.append((_start_of_citation(text, match.start()),
+                          _end_of_citation(text, match.end())))
     return _merge(zones)
+
+
+#: A citation opened by a parenthesis names its party just before it:
+#: "dans l'affaire Societe Bergerat Monnoyeur (Cass. soc., 25 septembre
+#: 2019)". The marker is inside the brackets and the name is outside, so a
+#: zone starting at the marker left that name unprotected while the same
+#: name written "(Cass. soc. ..., Societe Novandie)" was kept. One of the
+#: two was masked and the other not, in the same paragraph.
+_OPENS_A_CITATION = re.compile(r"\(\s*$")
+
+
+def _start_of_citation(text: str, start: int) -> int:
+    """Where the sentence holding a bracketed citation begins.
+
+    Widening backwards is safe because of the rule in :func:`group`: a row
+    counts as case law only when *every* one of its occurrences sits in a
+    zone. A client mentioned in the same sentence as a citation is still
+    masked, because the client is named elsewhere too.
+    """
+    if not _OPENS_A_CITATION.search(text[:start]):
+        return start
+    floor = max(0, start - CASE_LAW_MAX)
+    breaks = list(SENTENCE_BREAK.finditer(text, floor, start))
+    return breaks[-1].end() if breaks else floor
 
 
 def _end_of_citation(text: str, start: int) -> int:
@@ -390,7 +485,8 @@ def _fold(value: str) -> str:
 
 _EXCLUDED = frozenset(
     _fold(w).upper()
-    for w in (LEGAL_LEXICON | SENTENCE_OPENERS | DOCUMENT_FURNITURE | CORRESPONDENCE)
+    for w in (LEGAL_LEXICON | SENTENCE_OPENERS | DOCUMENT_FURNITURE | CORRESPONDENCE
+              | CIVILITY_WORDS | OCCUPATIONS | QUESTION_OPENERS)
 )
 
 
@@ -450,10 +546,16 @@ def find(text: str, known: list[str] | None = None) -> list[Finding]:
                     f"format d'un {_KEYED[kind]}, mais la clé de contrôle ne tombe pas juste",
                 ))
 
-    for kind, pattern, why in CHECKED_GROUPS:
+    for kind, pattern, why, trim in CHECKED_GROUPS:
         for match in pattern.finditer(text):
             start, end = match.span(1)
-            findings.append(Finding(match.group(1).strip(), start, end, kind, Certainty.CERTAIN, why))
+            value = match.group(1).strip()
+            if trim:
+                value = _trim_address(value)
+                if not value:
+                    continue
+                end = start + len(value)
+            findings.append(Finding(value, start, end, kind, Certainty.CERTAIN, why))
 
     for value in known or []:
         for match in re.finditer(re.escape(value), text):
@@ -514,7 +616,17 @@ def _other_spellings(text: str, findings: list[Finding]) -> list[Finding]:
     # company form, or the user's own declaration. Searching every
     # capitalised candidate instead turned "Bulletin", kept as a case-law
     # marker, into a reason to mask "bulletins de paie".
+    #
+    # A capitalised run of two words or more vouches for itself. "par
+    # Karim Benhaddou" carries no civility and no company form, so the
+    # row came out a bare candidate, nothing searched for its other
+    # spellings, and "Ensuite, benhaddou a envoyé" went out in clear in
+    # the masked copy. Two words is the whole of the rule: a single
+    # capitalised word is as likely to be "Bulletin", and vouching for
+    # that one turned "bulletins de paie" into a name.
     vouched = {f.value for f in findings if f.kind in ("name", "org", "declared")}
+    vouched |= {f.value for f in findings
+                if f.kind == "candidate" and len(f.value.split()) > 1}
     known = {
         word
         for value in vouched
@@ -582,7 +694,8 @@ def group(findings: list[Finding]) -> list[tuple[str, Certainty, str, int, str]]
 
 #: Kinds that name a datum rather than a person or an organisation.
 IDENTIFIER_KINDS = frozenset(
-    {"nir", "iban", "siret", "siren", "email", "phone", "plate", "birth_date", "address"}
+    {"nir", "iban", "siret", "siren", "email", "phone", "plate", "birth_date",
+     "address", "reference"}
 )
 
 

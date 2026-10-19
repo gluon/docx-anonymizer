@@ -75,15 +75,36 @@ surname with a cited party must not be shielded by it.
 Measured on a realistic two-page pleading (`tests/sample_conclusions.txt`)
 and pinned as a budget test:
 
-| | Conclusions, 2 pages | Mail thread, 1055 words |
-| --- | --- | --- |
-| Rows to arbitrate | 35 | 47 |
-| Identifiers found with certainty | 12 | 14 |
-| Cited parties correctly kept | 3 | 3 |
-| People or companies missed | 0 | 0 |
+| | Conclusions, 2 pages | Mail thread, 1055 words | Mail thread, 436 words |
+| --- | --- | --- | --- |
+| Rows to arbitrate | 35 | 48 | 32 |
+| Identifiers found with certainty | 12 | 14 | 15 |
+| Cited parties correctly kept | 3 | 3 | 2 |
+| People or companies missed | 0 | 0 | 0 |
 
-Both figures are pinned as budget tests, so a change to the lexicon or
-the patterns cannot quietly make the grid unusable in either direction.
+All three figures are pinned as budget tests, so a change to the lexicon
+or the patterns cannot quietly make the grid unusable in either
+direction.
+
+### The rows that were not worth arbitrating
+
+The counts above are what is left after a pass spent entirely on what the
+grid was asking for nothing. Measured on a fresh pleading and a fresh
+mail thread, it took 41 rows down to 35 and 35 down to 32, and the rows
+it removed were `Chef`, `Fondement` and `Montant` (table headings),
+`Dommages-intérêts` and `CPC`, `Assistante` and `Avocate`,
+`Pouvez-vous`, `Mme` read as a first name, and `AL` taken from the file
+reference `AL-2025-77412`, which is now detected as the reference it is.
+
+Three of those rows were worse than noise. `Mme Lenoir` was masked as
+`Romain Mercier` rather than `Mme Mercier`; the file reference lost its
+digits and kept its two letters as a name; and the invented company
+`Orion Industries` held the word `Industrie`, which the document used for
+the court's section, so the coherence check warned and the export refused
+on a conflict the program had created itself. The same pass closed one
+leak: a surname typed in lower case mid-sentence was only searched for
+when a civility or a company form vouched for the name, which a mail
+rarely provides, so `Ensuite, benhaddou a envoyé` went out in clear.
 
 The mail thread was the harder document, and it is the one that found the
 real defects: a letter is mostly greeting and sign-off, a company is

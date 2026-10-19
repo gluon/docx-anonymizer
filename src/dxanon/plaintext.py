@@ -8,7 +8,7 @@ same refusal check as the file mode, so the two cannot drift apart.
 
 from __future__ import annotations
 
-from .engine import RefusedExport, Residue, _replace_all, refuse_empty
+from .engine import RefusedExport, Residue, _occurs, _replace_all, refuse_empty
 from .mapping import Mapping
 
 
@@ -25,10 +25,13 @@ def anonymize(text: str, mapping: Mapping) -> str:
     mapping.mark_used(_applied(text, mapping.forward()))
     masked = _replace(text, mapping.forward())
 
+    # Word by word, exactly as the file mode reads its output back: a
+    # value found inside a longer word is not an occurrence of it, and
+    # treating it as one refused clean documents.
     residues = [
         Residue(value=entry.real, where="le texte anonymisé")
         for entry in mapping.entries
-        if entry.real and entry.real in masked
+        if entry.real and _occurs(entry.real, masked)
     ]
     if residues:
         raise RefusedExport(residues)

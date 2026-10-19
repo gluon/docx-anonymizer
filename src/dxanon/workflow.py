@@ -149,25 +149,122 @@ def _assign(rows: list[Row], text: str) -> None:
             continue
         maskable.append(row)
 
-    groups = _group_rows(maskable)
+    links = _email_links(rows)
+    groups = _group_rows(maskable, links)
     for members in groups:
-        longest = max(members, key=lambda r: len(_tokens(r.value)))
+        spine = _spine(members, links)
         kind = _kind_for_group(members, text)
-        base = _base_for(longest.value, kind, taken, text)
+        rendered = _render_group(members, spine, kind, taken, text)
         for member in members:
-            member.group = longest.value
-            member.pseudonym = _unique(_render_like(base, longest.value, member.value), taken)
-            taken.add(member.pseudonym)
+            member.group = spine
+            member.pseudonym = rendered[member.value]
+        # Reserved once the whole group is rendered, and not row by row.
+        # Reserving as we went made a group collide with itself: "Sophie
+        # LENOIR" reserved the word "LEMOINE", so the very next spelling,
+        # "LENOIR", could not have it and was handed "LEMOINE 2", which
+        # is what the document then said, in a pleading: "le licenciement
+        # de Madame LEMOINE 2".
+        for pseudonym in rendered.values():
+            taken.add(pseudonym)
             # Reserve the individual words too, so no other subject is
             # given a name that is a word of this one. Without this,
             # "Camille" became "Bruno" while another person became
             # "Bruno Delacroix": a model shortening that to "le Docteur
             # Bruno" would have had it restored as "le Docteur Camille",
             # silently and with no way to notice.
-            taken.update(member.pseudonym.split())
+            taken.update(pseudonym.split())
 
 
-def _group_rows(rows: list[Row]) -> list[list[Row]]:
+def _spine(members: list[Row], links: list[tuple[str, ...]]) -> str:
+    """The spelling whose words order the whole group's pseudonym.
+
+    Normally the longest spelling: every shorter one is a slice of it, so
+    rendering from it keeps the same invented word on the same real word.
+
+    When an address joined the group instead, no spelling holds all the
+    words. "Sophie" and "Lenoir" are one person and one token each, so
+    whichever was picked gave both rows the same slot, and both were
+    rendered as the same first name, the second one numbered. The address
+    carries the order the prose never wrote, so it becomes the spine.
+    """
+    longest = max(members, key=lambda r: len(_tokens(r.value)))
+    words = _tokens(longest.value)
+    present = {token for member in members for token in _tokens(member.value)}
+    for link in links:
+        folded = {_fold(part).upper() for part in link}
+        if len(folded) > len(words) and folded <= present:
+            return " ".join(link)
+    return longest.value
+
+
+def _render_group(
+    members: list[Row], longest: str, kind: str, taken: set[str], text: str,
+) -> dict[str, str]:
+    """Pseudonyms for every spelling of one subject, drawn from one base.
+
+    If any rendering is already somebody else's, the whole base is thrown
+    away and another drawn, rather than patching the collision with a
+    numbered suffix: the suffix ends up in the finished document, where a
+    reader meets "Madame LEMOINE 2" in a set of conclusions.
+
+    A number is still the last resort, for the case the retries cannot
+    fix: two different real values in one group rendering to the same
+    string. Two real values sharing a pseudonym cannot be told apart on
+    the way back, so one of them would come home in both places.
+    """
+    refused: set[str] = set()
+    for _ in range(len(members) + 8):
+        base = _base_for(longest, kind, taken | refused, text)
+        rendered = {m.value: _render_like(base, longest, m.value) for m in members}
+        clashes = {p for p in rendered.values() if p in taken}
+        if not clashes:
+            seen: dict[str, str] = {}
+            for value, pseudonym in rendered.items():
+                if pseudonym in seen.values():
+                    pseudonym = _unique(pseudonym, set(seen.values()) | taken)
+                seen[value] = pseudonym
+            return seen
+        refused |= {word for p in clashes for word in p.split()}
+    return {m.value: _unique(_render_like(base, longest, m.value), taken) for m in members}
+
+
+#: Local parts that name a function rather than a person.
+_FUNCTION_MAILBOXES = frozenset({
+    "CONTACT", "CONTACTS", "INFO", "INFOS", "ACCUEIL", "SECRETARIAT", "CABINET",
+    "ADMIN", "SERVICE", "SERVICES", "COMMERCIAL", "DIRECTION", "RESSOURCES",
+    "NOREPLY", "NEPASREPONDRE", "FACTURATION", "COMPTABILITE", "GREFFE",
+})
+
+
+def _email_links(rows: list[Row]) -> list[tuple[str, ...]]:
+    """Words that one address says belong to one person.
+
+    A mail thread writes a client as "Sophie" in one line and "Mme
+    Lenoir" in another, and never once writes both words together. No
+    row contains the other, so the grouping by words could not see one
+    person and invented two, each with its own pseudonym: the same woman
+    appeared twice in the masked text under different names.
+
+    Her address says what the prose does not. Only a local part of
+    exactly two parts is used, and neither may name a function: three
+    parts or more is as often a shared mailbox, and merging two partners
+    of a firm into one person would be worse than the split it fixes.
+    """
+    links: list[tuple[str, ...]] = []
+    for row in rows:
+        if row.kind != "email":
+            continue
+        local = row.value.split("@")[0]
+        parts = tuple(p for p in re.split(r"[._+-]", local) if len(p) >= 4)
+        if len(parts) != 2:
+            continue
+        if {_fold(p).upper() for p in parts} & _FUNCTION_MAILBOXES:
+            continue
+        links.append(parts)
+    return links
+
+
+def _group_rows(rows: list[Row], links: list[frozenset[str]] | None = None) -> list[list[Row]]:
     """Put every spelling of one subject in one group.
 
     Two values belong together when the words of one are contained in the
@@ -196,6 +293,14 @@ def _group_rows(rows: list[Row]) -> list[list[Row]]:
                 continue
             if tokens[i] <= tokens[j] or tokens[j] <= tokens[i]:
                 parents[root(i)] = root(j)
+
+    # An address can say that two values are one person even when no row
+    # contains the other: see :func:`_email_links`.
+    for link in links or []:
+        folded = {_fold(part).upper() for part in link}
+        members = [i for i, words in enumerate(tokens) if words & folded]
+        for other in members[1:]:
+            parents[root(other)] = root(members[0])
 
     grouped: dict[int, list[Row]] = {}
     for index, row in enumerate(rows):
@@ -303,7 +408,23 @@ def _kind_from_context(value: str, text: str) -> str | None:
         return max(votes.items(), key=lambda item: item[1])[0]
     if _TOPONYM.match(value):
         return "place"
-    return "org" if _looks_like_org(value) else None
+    if _looks_like_org(value):
+        return "org"
+    # A domain name says what the prose left out. "delivree par Thermopack
+    # Industrie" carries no form of company, so the employer read as a
+    # person and was given a first name; the same file writes
+    # "k.benhaddou@thermopack-industrie.fr", and a word in a domain
+    # belongs to an organisation. Read from the domain only, never the
+    # local part, which is usually a person.
+    return "org" if _in_a_domain(value, text) else None
+
+
+def _in_a_domain(value: str, text: str) -> bool:
+    if len(_tokens(value)) != 1:
+        return False
+    word = _fold(value).casefold()
+    return any(word in _fold(domain).casefold()
+               for domain in re.findall(r"@([\w.-]+\.[A-Za-z]{2,})", text))
 
 
 #: A hyphenated Saint- or Mont- is a place far more often than a surname,
@@ -358,8 +479,36 @@ def _filler(kind: str, position: int, taken: set[str], text: str) -> str:
         # Keying it on len(taken) made every name in the document depend
         # on how many rows the grid happened to hold, so adding one
         # detection silently renamed everything.
-        return _ACTIVITY_WORDS[position % len(_ACTIVITY_WORDS)]
+        #
+        # Checked against the document, which every other generated word
+        # already was. This one was not, and "Industries" was handed to a
+        # company in a file that says "Section Industrie": the pseudonym
+        # then contained a value the table wanted masked, the coherence
+        # check said so, and the export was refused on a conflict the
+        # program had created itself.
+        return _activity_word(position, taken, text)
     return propose("place", taken, text=text)
+
+
+def _activity_word(position: int, taken: set[str], text: str) -> str:
+    folded_text = _fold(text).casefold()
+    folded_taken = {_fold(t).casefold() for t in taken}
+    order = range(position, position + len(_ACTIVITY_WORDS))
+    for index in order:
+        word = _ACTIVITY_WORDS[index % len(_ACTIVITY_WORDS)]
+        folded = _fold(word).casefold()
+        if folded in folded_taken:
+            continue
+        # Substring, not whole word: "Industries" has to be refused in a
+        # document that contains "Industrie", since the check that
+        # refuses an export reads the one inside the other.
+        if folded_text and (folded in folded_text or any(
+            part and part in folded for part in folded_text.split()
+            if len(part) > 4
+        )):
+            continue
+        return word
+    return _ACTIVITY_WORDS[position % len(_ACTIVITY_WORDS)]
 
 
 #: Words that make an invented company name read like one.
@@ -454,6 +603,8 @@ def _mask_identifier(value: str, counters: dict[str, int]) -> str:
 def _label_for(value: str) -> str:
     if "@" in value:
         return "email"
+    if detect.REFERENCE.fullmatch(value):
+        return "référence"
     # Address first, and months matched as whole words: "mars" is a
     # substring of "Marseille", which labelled every postcode line in the
     # sample as a date of birth.
