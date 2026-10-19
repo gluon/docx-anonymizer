@@ -264,6 +264,9 @@ class Window(QMainWindow):
         # keyboard can never reach the button under it.
         self.paste_area.setTabChangesFocus(True)
         self.paste_area.setPlaceholderText("Collez ici le texte à anonymiser…")
+        # The placeholder disappears with the first paste; the name stays,
+        # for a screen reader and for whoever comes back to the screen.
+        self.paste_area.setAccessibleName("Texte à anonymiser")
         self.paste_area.setVisible(False)
         layout.addWidget(self.paste_area, stretch=1)
 
@@ -373,13 +376,17 @@ class Window(QMainWindow):
         self.grid_heading.setFont(QFont(self.font().family(), 15, QFont.Bold))
         layout.addWidget(self.grid_heading)
 
-        self.grid_hint = QLabel("Décochez ce qui ne doit pas être masqué.")
+        self.grid_hint = QLabel(
+            "Décochez ce qui ne doit pas être masqué. "
+            "Double-cliquez sur un pseudonyme pour le changer."
+        )
         self.grid_hint.setWordWrap(True)
         layout.addWidget(self.grid_hint)
 
         self.table = QTableWidget(0, 5)
         # Tab leaves the table; the arrows still move between cells.
         self.table.setTabKeyNavigation(False)
+        self.table.setAccessibleName("Éléments repérés")
         self.table.setHorizontalHeaderLabels(
             ["Masquer", "Valeur trouvée", "Occurrences", "Remplacée par", "Pourquoi"]
         )
@@ -441,10 +448,13 @@ class Window(QMainWindow):
             inner.setContentsMargins(0, 0, 0, 0)
             self.table.setCellWidget(index, 0, holder)
 
-            self.table.setItem(index, 1, _cell(row.value))
+            self.table.setItem(index, 1, _cell(row.value, tip=row.value))
             self.table.setItem(index, 2, _cell(str(row.occurrences)))
-            self.table.setItem(index, 3, QTableWidgetItem(row.pseudonym))
-            self.table.setItem(index, 4, _cell(f"{CERTAINTY_LABEL[row.certainty]} — {row.why}"))
+            pseudonym = QTableWidgetItem(row.pseudonym)
+            pseudonym.setToolTip("Double-cliquez pour changer ce pseudonyme")
+            self.table.setItem(index, 3, pseudonym)
+            why = f"{CERTAINTY_LABEL[row.certainty]} — {row.why}"
+            self.table.setItem(index, 4, _cell(why, tip=why))
 
     def _toggle(self, row: workflow.Row, state: int) -> None:
         row.decision = Decision.REPLACE if state else Decision.KEEP
@@ -470,6 +480,7 @@ class Window(QMainWindow):
         self.result_area = QPlainTextEdit()
         self.result_area.setReadOnly(True)
         self.result_area.setTabChangesFocus(True)
+        self.result_area.setAccessibleName("Résultat")
         layout.addWidget(self.result_area, stretch=1)
 
         row = QHBoxLayout()
@@ -516,6 +527,9 @@ class Window(QMainWindow):
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.result_file.parent)))
             return
         QApplication.clipboard().setText(self.result_area.toPlainText())
+        # Nothing showed the copy had happened, so people copied twice, or
+        # went to the chat unsure. The label says it until the next result.
+        self.copy_button.setText("Copié ✓")
 
     def _run(self) -> None:
         assert self.grid is not None
@@ -566,13 +580,18 @@ class Window(QMainWindow):
         heading = QLabel("Remettre les vrais noms")
         heading.setFont(QFont(self.font().family(), 15, QFont.Bold))
         layout.addWidget(heading)
-        layout.addWidget(QLabel("Collez le texte corrigé, ou ouvrez le document corrigé."))
+        prompt = QLabel("Collez le texte corrigé, ou ouvrez le document corrigé.")
+        layout.addWidget(prompt)
 
         self.return_area = QPlainTextEdit()
         self.return_area.setTabChangesFocus(True)
+        self.return_area.setAccessibleName("Texte renvoyé par l'IA")
+        prompt.setBuddy(self.return_area)
         layout.addWidget(self.return_area, stretch=1)
 
-        self.allow_partial = QCheckBox("Ce n'est qu'un extrait du texte masqué")
+        self.allow_partial = QCheckBox(
+            "Je ne colle qu'une partie du texte : ne pas exiger tous les pseudonymes"
+        )
         layout.addWidget(self.allow_partial)
 
         row = QHBoxLayout()
@@ -681,7 +700,7 @@ class Window(QMainWindow):
             "L'IA les a probablement reformulés, et ils ne peuvent donc plus être "
             "remplacés par les vrais noms :\n\n"
             + "\n".join(f"• {r.value}" for r in refused.residues[:12])
-            + "\n\nCorrigez-les dans le texte, ou cochez la case « extrait ».",
+            + "\n\nCorrigez-les dans le texte, ou cochez « Je ne colle qu'une partie du texte ».",
         )
 
     # -------------------------------------------------------------- reset
@@ -819,8 +838,10 @@ def _restored_stem(stem: str, mapping: Mapping) -> str:
     return restored
 
 
-def _cell(text: str) -> QTableWidgetItem:
+def _cell(text: str, tip: str = "") -> QTableWidgetItem:
     item = QTableWidgetItem(text)
+    if tip:
+        item.setToolTip(tip)
     item.setFlags(item.flags() & ~Qt.ItemIsEditable)
     return item
 

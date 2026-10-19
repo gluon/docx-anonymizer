@@ -309,6 +309,22 @@ class WindowTests(unittest.TestCase):
         self.click("Restaurer une autre réponse")
         self.assertEqual(self.at(), RETURN)
 
+    def test_copier_says_it_copied(self):
+        self.to_result()
+        self.click("Copier")
+        self.assertEqual(QApplication.clipboard().text(), self.window.result_area.toPlainText())
+        self.button("Copié ✓")
+
+    def test_text_areas_have_names(self):
+        for area in (self.window.paste_area, self.window.return_area, self.window.result_area):
+            self.assertTrue(area.accessibleName(), area)
+
+    def test_the_why_column_can_be_read_in_full(self):
+        self.to_grid()
+        for index in range(self.window.table.rowCount()):
+            item = self.window.table.item(index, 4)
+            self.assertEqual(item.toolTip(), item.text())
+
     # --------------------------------------------------------------- docx
     def test_with_a_file_the_result_opens_its_folder(self):
         import tempfile
