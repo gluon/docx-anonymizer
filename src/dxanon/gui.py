@@ -294,7 +294,39 @@ class Window(QMainWindow):
         self.analyse_button.setVisible(True)
         self.paste_area.setFocus()
 
+    def _may_start_over(self) -> bool:
+        """Ask before a new analysis replaces the table of a cycle in progress.
+
+        Opening another document used to drop the current table without a
+        word: the same loss as closing the window, which asks. So this asks
+        the same question, with "Revenir" as the default.
+        """
+        if self.mapping is None or not self.mapping.entries:
+            return True
+        question = QMessageBox(self)
+        question.setWindowTitle("Un cycle est en cours")
+        question.setIcon(QMessageBox.Warning)
+        question.setText("Un cycle est en cours")
+        question.setInformativeText(
+            f"{len(self.mapping.entries)} correspondance(s) sont en mémoire et "
+            "ne sont enregistrées nulle part.\n\n"
+            "Si vous commencez un nouveau document, les vrais noms du cycle en "
+            "cours seront définitivement perdus et tout document déjà anonymisé "
+            "deviendra illisible."
+        )
+        question.setStandardButtons(QMessageBox.Cancel | QMessageBox.Discard)
+        question.setDefaultButton(QMessageBox.Cancel)
+        question.button(QMessageBox.Discard).setText("Abandonner le cycle")
+        question.button(QMessageBox.Cancel).setText("Revenir")
+        if question.exec() != QMessageBox.Discard:
+            return False
+        self.mapping = None
+        self._refresh_cycle()
+        return True
+
     def _start_file(self) -> None:
+        if not self._may_start_over():
+            return
         chosen, _ = QFileDialog.getOpenFileName(
             self, "Choisir un document Word", str(self.workspace), "Documents Word (*.docx)"
         )
@@ -313,6 +345,8 @@ class Window(QMainWindow):
     def _analyse_text(self) -> None:
         text = self.paste_area.toPlainText().strip()
         if not text:
+            return
+        if not self._may_start_over():
             return
         self.source_text = text
         self.source_file = None

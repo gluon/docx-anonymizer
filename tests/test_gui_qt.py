@@ -278,6 +278,25 @@ class WindowTests(unittest.TestCase):
                         sorted(p.name for p in folder.iterdir()))
 
     # -------------------------------------------------------------- close
+    def test_starting_over_during_a_cycle_asks_first(self):
+        self.to_result()
+        held = self.window.mapping
+        self.window.stack.setCurrentIndex(HOME)
+        self.answer_next_dialog("Revenir")
+        self.click("Analyser")
+        self.assertEqual(self.seen_dialogs, ["Un cycle est en cours"])
+        self.assertIs(self.window.mapping, held)
+        self.assertEqual(self.at(), HOME)
+
+        self.answer_next_dialog("Revenir")
+        self.click("Ouvrir un document Word")  # no file dialog may open
+        self.assertIs(self.window.mapping, held)
+
+        self.answer_next_dialog("Abandonner le cycle")
+        self.click("Analyser")
+        self.assertIsNone(self.window.mapping)
+        self.assertEqual(self.at(), GRID)
+
     def test_close_without_cycle_does_not_ask(self):
         self.window.close()
         self.assertFalse(self.window.isVisible())
