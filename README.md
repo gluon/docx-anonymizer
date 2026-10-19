@@ -230,14 +230,22 @@ rest of the case file.
 
 ## What is not verified
 
-**The window.** The test suite runs headless, so `gui.py` is parsed,
-checked for dead imports and for calls into functions that still exist,
-and imported against a real PySide6 in CI. None of that is the same as
-opening it. Until someone uses it on Windows, its behaviour is unverified.
+**The window.** `tests/test_gui_qt.py` builds it on Qt's offscreen
+platform and drives it with clicks: the five screens, the help from
+each, the refusals, the confirmations, the keyboard path. It has also
+been run by hand on macOS (Python 3.14, PySide6 6.12). It has not been
+run on Windows. A segfault on quit was reported once on macOS and could
+not be reproduced; the lazy type creation seen in its trace now happens
+at import instead of at closing time, which is checked at startup, but
+the crash itself is not proven gone.
 
-**Word itself.** The tests assert the XML and the text. Whether Word
-renders a produced file exactly as before has to be checked by opening
-one.
+**Word itself.** A document made by Word for Mac 16.114, with a header,
+a footer, tracked changes and a comment, was passed through the window
+and reopened in Word: no repair prompt, same layout, the reviewer's
+name gone from the comment, the revisions, people.xml and the
+properties; the return trip gave back the original. That is one
+document on one version of Word. A name whose formatting changes in the
+middle (half bold) comes back in the formatting of its first part.
 
 **The Windows executable.** It has never been built or run. The build job
 exists and the bundle is checked by running `--self-check` against it,
