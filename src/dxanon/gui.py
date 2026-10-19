@@ -3,11 +3,9 @@
 Deliberately thin. Every decision it shows comes from :mod:`workflow`,
 every substitution from :mod:`engine` or :mod:`plaintext`, and both are
 covered by tests that need no display. What lives here is layout and
-wiring, which is the part a test cannot usefully assert anyway.
-
-NOT EXECUTED ANYWHERE IN CI. The test suite runs headless, so this file
-is checked by being imported, not by being shown. Until someone opens it
-on Windows, treat its behaviour as unverified.
+wiring. tests/test_gui_qt.py builds this window on Qt's offscreen
+platform and drives it with clicks; it has also been run by hand on
+macOS. It has not been run on Windows.
 """
 
 from __future__ import annotations
@@ -15,8 +13,15 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
+from PySide6 import QtGui
+from PySide6.QtCore import QEvent, Qt
+# QCloseEvent is imported for its side effect as much as for the type hint.
+# PySide creates a wrapper type lazily, the first time Python touches it.
+# For QCloseEvent that first time used to be inside closeEvent, while macOS
+# was terminating the application, and a crash report shows a segfault in
+# exactly that lazy initialisation. Naming the type here creates it when
+# the module loads. _check_event_types proves it did.
+from PySide6.QtGui import QCloseEvent, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QFileDialog, QHBoxLayout, QHeaderView,
     QLabel, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QSizePolicy,
@@ -107,6 +112,7 @@ CERTAINTY_LABEL = {
 class Window(QMainWindow):
     def __init__(self, guard: NetworkGuard) -> None:
         super().__init__()
+        _check_event_types()
         self.guard = guard
         self.grid: workflow.Grid | None = None
         self.source_text = ""
@@ -166,12 +172,6 @@ class Window(QMainWindow):
         self.stack.setCurrentIndex(getattr(self, "_came_from", 0))
         self.help_button.setText("Aide")
 
-    def keyPressEvent(self, event) -> None:  # noqa: N802 (Qt's own spelling)
-        if event.key() == Qt.Key_Escape and self.stack.currentIndex() == HELP:
-            self._close_help()
-            return
-        super().keyPressEvent(event)
-
     # --------------------------------------------------------------- help
     def _build_help(self) -> QWidget:
         """Everything that used to sit on screen being ignored.
@@ -200,6 +200,16 @@ class Window(QMainWindow):
         body.setOpenExternalLinks(False)
         body.setHtml(HELP_TEXT)
         outer.addWidget(body, stretch=1)
+
+        # A shortcut rather than a keyPressEvent override, which would bring
+        # back the lazy event-type creation that _check_event_types rules
+        # out, this time for QKeyEvent. Window-wide, because after a click
+        # on "Aide" the focus stays on that button in the status bar,
+        # outside the page; a shortcut on a hidden page is inactive, so it
+        # only fires while the help is shown.
+        escape = QShortcut(QKeySequence(Qt.Key_Escape), page)
+        escape.setContext(Qt.WindowShortcut)
+        escape.activated.connect(self._close_help)
 
         return page
 
@@ -295,7 +305,7 @@ class Window(QMainWindow):
         try:
             text, images, identities = source.read_document(self.source_file)
         except Exception as error:  # noqa: BLE001 - shown to the user as is
-            QMessageBox.critical(self, "Lecture impossible", str(error))
+            _alert(self, QMessageBox.Critical, "Lecture impossible", str(error))
             return
         self.source_text = text
         self._open_grid(self.source_file.stem, images=images, known=identities)
@@ -329,7 +339,12 @@ class Window(QMainWindow):
         )
         self.table.verticalHeader().setVisible(False)
         header = self.table.horizontalHeader()
+        # The pseudonym is what the user reads and retypes before trusting
+        # the export, so it gets as much room as the value it replaces.
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.Stretch)
         header.setSectionResizeMode(4, QHeaderView.Stretch)
         self.table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         layout.addWidget(self.table, stretch=1)
@@ -411,7 +426,9 @@ class Window(QMainWindow):
         copy = QPushButton("Copier")
         copy.clicked.connect(self._copy_result)
         restart = QPushButton("Effacer le cycle")
-        restart.clicked.connect(self._reset)
+        # Not connect(self._reset): clicked passes checked=False, which
+        # landed in ``confirm`` and cleared the cycle without asking.
+        restart.clicked.connect(lambda: self._reset())
         done = QPushButton("J'ai la réponse de l'IA, remettre les vrais noms")
         done.setMinimumHeight(40)
         done.clicked.connect(lambda: self.stack.setCurrentIndex(3))
@@ -431,7 +448,7 @@ class Window(QMainWindow):
 
         conflicts = self.grid.conflicts()
         if conflicts:
-            QMessageBox.warning(self, "Table incohérente", "\n".join(conflicts))
+            _alert(self, QMessageBox.Warning, "Table incohérente", "\n".join(conflicts))
             return
 
         mapping = self.grid.to_mapping()
@@ -443,8 +460,8 @@ class Window(QMainWindow):
             else:
                 shown = plaintext.anonymize(self.source_text, mapping)
         except RefusedExport as refused:
-            QMessageBox.critical(
-                self,
+            _alert(
+                self, QMessageBox.Critical,
                 "Export refusé, rien n'a été écrit",
                 "Des valeurs réelles subsistent :\n\n"
                 + "\n".join(f"• {r.value} ({r.where})" for r in refused.residues[:12]),
@@ -489,8 +506,8 @@ class Window(QMainWindow):
 
     def _mapping(self) -> Mapping | None:
         if self.mapping is None:
-            QMessageBox.warning(
-                self,
+            _alert(
+                self, QMessageBox.Warning,
                 "Aucun cycle en cours",
                 "Il n'y a pas de correspondance en mémoire. Rien n'étant "
                 "enregistré sur le disque, un cycle commencé avant la "
@@ -515,8 +532,8 @@ class Window(QMainWindow):
         self.result_heading.setText("Texte restauré")
         self.result_area.setPlainText(restored)
         if missing:
-            QMessageBox.information(
-                self, "Restauration partielle",
+            _alert(
+                self, QMessageBox.Information, "Restauration partielle",
                 "Non restaurés :\n" + "\n".join(f"• {v}" for v in missing[:12]),
             )
         self.stack.setCurrentIndex(2)
@@ -543,8 +560,8 @@ class Window(QMainWindow):
         self.stack.setCurrentIndex(2)
 
     def _explain_refusal(self, refused: RefusedExport) -> None:
-        QMessageBox.critical(
-            self,
+        _alert(
+            self, QMessageBox.Critical,
             "Restauration refusée, rien n'a été écrit",
             "Ces pseudonymes n'ont pas été retrouvés dans le texte renvoyé. "
             "L'IA les a probablement reformulés, et ils ne peuvent donc plus être "
@@ -566,8 +583,9 @@ class Window(QMainWindow):
             question = QMessageBox(self)
             question.setWindowTitle("Effacer le cycle")
             question.setIcon(QMessageBox.Warning)
-            question.setText(
-                f"Effacer les {len(self.mapping.entries)} correspondance(s) en mémoire ?\n\n"
+            question.setText("Effacer le cycle ?")
+            question.setInformativeText(
+                f"Les {len(self.mapping.entries)} correspondance(s) en mémoire seront effacées. "
                 "Les vrais noms de ce cycle ne pourront plus être remis. "
                 "Tout document déjà anonymisé deviendra définitivement illisible."
             )
@@ -592,13 +610,14 @@ class Window(QMainWindow):
         self._refresh_cycle()
         self.stack.setCurrentIndex(0)
 
-    def closeEvent(self, event) -> None:  # noqa: N802 (Qt's own spelling)
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 (Qt's own spelling)
         """Closing the window is what loses a cycle, so it asks first."""
         if self.mapping is not None and self.mapping.entries:
             question = QMessageBox(self)
             question.setWindowTitle("Un cycle est en cours")
             question.setIcon(QMessageBox.Warning)
-            question.setText(
+            question.setText("Un cycle est en cours")
+            question.setInformativeText(
                 f"{len(self.mapping.entries)} correspondance(s) sont en mémoire et "
                 "ne sont enregistrées nulle part.\n\n"
                 "Si vous fermez maintenant, les vrais noms de ce cycle seront "
@@ -613,6 +632,40 @@ class Window(QMainWindow):
                 event.ignore()
                 return
         event.accept()
+
+
+def _check_event_types() -> None:
+    """Refuse to start unless QCloseEvent already exists as a full type.
+
+    This does not prove the macOS crash on quit is gone: it was never
+    reproduced here. What it proves is narrower and checkable: the lazy
+    initialisation seen in the crash trace no longer happens at closing
+    time, because the type is already in the module when the window is
+    built.
+    """
+    created = QtGui.__dict__.get("QCloseEvent")
+    if created is not QCloseEvent or not issubclass(QCloseEvent, QEvent):
+        raise RuntimeError("QCloseEvent n'est pas initialisé au démarrage")
+    probe = QCloseEvent()
+    probe.ignore()
+    if probe.isAccepted():
+        raise RuntimeError("QCloseEvent est incomplet au démarrage")
+
+
+def _alert(parent: QWidget, icon: QMessageBox.Icon, title: str, body: str) -> None:
+    """A message box whose title is printed in the box itself.
+
+    macOS draws no title on a message box: Qt sets it, the platform drops
+    it. "Export refusé, rien n'a été écrit" was a window title, so on a Mac
+    the one sentence carrying the guarantee was never shown. The title goes
+    in the text, which every platform prints, and the detail under it.
+    """
+    box = QMessageBox(parent)
+    box.setIcon(icon)
+    box.setWindowTitle(title)
+    box.setText(title)
+    box.setInformativeText(body)
+    box.exec()
 
 
 def _cell(text: str) -> QTableWidgetItem:
