@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 from . import textmap
 from .mapping import Mapping
-from .package import AUTHOR, INITIALS, PROPERTY_FIELDS, W, Package, Part
+from .package import IDENTITY_ATTRIBUTES, PROPERTY_FIELDS, W, Package, Part
 
 TEXT_SUFFIXES = (".xml", ".rels")
 INSTR_TEXT = f"{{{W}}}instrText"
@@ -28,6 +28,25 @@ class RefusedExport(Exception):
         listing = "; ".join(f"{r.value!r} in {r.where}" for r in residues[:8])
         more = "" if len(residues) <= 8 else f" (+{len(residues) - 8} more)"
         super().__init__(f"export refused, {len(residues)} residue(s): {listing}{more}")
+
+
+class EmptyTable(RefusedExport):
+    """Raised when there is nothing to mask. Nothing is written.
+
+    An empty table substitutes nothing and finds no residue, so the check
+    passes and the original goes out under a name ending in _ANON. That is
+    worse than no tool at all: the whole file is submitted in clear by
+    someone who believes it masked, on the tool's own word. So an empty
+    table is a refusal, like a residue, whatever the front end.
+    """
+
+    def __init__(self) -> None:
+        super().__init__([Residue(value="(aucune)", where="table vide : rien n'est masqué")])
+
+
+def refuse_empty(mapping: Mapping) -> None:
+    if not any(entry.real and entry.pseudonym for entry in mapping.entries):
+        raise EmptyTable()
 
 
 @dataclass(frozen=True)
@@ -47,6 +66,7 @@ class Report:
 
 
 def anonymize(source, destination, mapping: Mapping) -> Report:
+    refuse_empty(mapping)
     package = Package.open(source)
     report = _substitute(package, mapping.forward())
     report.images = [p.name for p in package.images()]
@@ -82,7 +102,12 @@ def deanonymize(source, destination, mapping: Mapping, require_all: bool = True)
     """
     package = Package.open(source)
 
-    pseudonyms = [e.pseudonym for e in mapping.entries if e.pseudonym]
+    # Only what the outward trip actually wrote. anonymize records it with
+    # mark_used; this used to ignore the record and demand every entry, so
+    # a document sent back untouched was refused over a short form the full
+    # name had consumed, or a word seen only in the file name. Same rule as
+    # plaintext.deanonymize.
+    pseudonyms = [e.pseudonym for e in mapping.entries if e.pseudonym and mapping.was_used(e)]
     present = {r.value for r in scan(package, pseudonyms)}
     missing = [p for p in pseudonyms if p not in present]
 
@@ -136,7 +161,7 @@ def _substitute_runs(root, pairs: list[tuple[str, str]], used: set[str]) -> int:
 
 
 def _substitute_attributes(root, pairs: list[tuple[str, str]], used: set[str]) -> int:
-    """Authors and initials on comments and on every tracked change.
+    """Authors and initials on comments, tracked changes and people.xml.
 
     A document reviewed in-house keeps the name of each reviewer attached
     to each correction.  It shows nowhere in the body and reads perfectly
@@ -144,7 +169,7 @@ def _substitute_attributes(root, pairs: list[tuple[str, str]], used: set[str]) -
     """
     count = 0
     for node in root.iter():
-        for attribute in (AUTHOR, INITIALS):
+        for attribute in IDENTITY_ATTRIBUTES:
             value = node.get(attribute)
             if not value:
                 continue

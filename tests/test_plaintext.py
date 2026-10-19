@@ -3,16 +3,14 @@
 from __future__ import annotations
 
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from dxanon import plaintext  # noqa: E402
-from dxanon.engine import RefusedExport  # noqa: E402
+from dxanon.engine import EmptyTable, RefusedExport  # noqa: E402
 from dxanon.mapping import Mapping  # noqa: E402
-from dxanon.session import Session  # noqa: E402
 
 
 def mapping() -> Mapping:
@@ -69,6 +67,10 @@ class PastedText(unittest.TestCase):
         m.add("Moreau", "Lemoine")
         self.assertTrue(m.conflicts())
 
+    def test_an_empty_table_refuses(self):
+        with self.assertRaises(EmptyTable):
+            plaintext.anonymize("Monsieur Dupont", Mapping())
+
     def test_a_surviving_real_value_refuses(self):
         m = Mapping()
         m.add("Dupont", "Dupont-bis")  # the pseudonym contains the real value
@@ -87,42 +89,6 @@ class PastedText(unittest.TestCase):
         restored, missing = plaintext.deanonymize("Orion conteste.", m, require_all=False)
         self.assertEqual(restored, "Mecanique Provencale conteste.")
         self.assertIn("Marc Lemoine", missing)
-
-
-class Sessions(unittest.TestCase):
-    def setUp(self):
-        self.dir = Path(tempfile.mkdtemp())
-
-    def test_a_session_survives_being_closed_and_reopened(self):
-        session = Session.create(self.dir, "Dupont c/ Orion", mode="text")
-        session.mapping.add("Jean Dupont", "Marc Lemoine")
-        session.save()
-
-        reopened = Session.load(session.folder)
-        self.assertEqual(reopened.label, "Dupont c/ Orion")
-        self.assertEqual(reopened.mapping.for_real("Jean Dupont").pseudonym, "Marc Lemoine")
-
-    def test_recent_lists_newest_first_and_skips_broken_folders(self):
-        first = Session.create(self.dir, "Affaire A", mode="text")
-        second = Session.create(self.dir, "Affaire B", mode="file")
-        second.created = "2099-01-01T00:00:00+00:00"
-        second.save()
-        (self.dir / "cassee.dxanon").mkdir()
-
-        labels = [s.label for s in Session.recent(self.dir)]
-        self.assertEqual(labels, ["Affaire B", "Affaire A"])
-        self.assertTrue(first.folder.exists())
-
-    def test_two_sessions_with_the_same_label_do_not_collide(self):
-        one = Session.create(self.dir, "Dupont", mode="text")
-        two = Session.create(self.dir, "Dupont", mode="text")
-        self.assertNotEqual(one.folder, two.folder)
-
-    def test_the_table_is_never_inside_the_exported_document(self):
-        """Stated in the README, pinned here: it lives beside, not within."""
-        session = Session.create(self.dir, "Affaire", mode="file")
-        self.assertEqual(session.mapping_path.parent, session.folder)
-        self.assertTrue(session.mapping_path.name.endswith(".json"))
 
 
 class Pseudonyms(unittest.TestCase):
@@ -153,6 +119,7 @@ class Pseudonyms(unittest.TestCase):
             taken.add(propose("name", taken))
         surnames = {name.split()[-1] for name in taken}
         self.assertGreater(len(surnames), 3, taken)
+
 
 
 if __name__ == "__main__":

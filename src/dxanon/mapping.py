@@ -1,21 +1,20 @@
 """The correspondence table: real value on one side, pseudonym on the other.
 
-This file is the sensitive one.  It holds exactly what the exercise is
-meant to protect, it never travels inside an exported document, and it is
-written to disk rather than kept in memory so that closing the window
-between the outward and the return trip does not lose the real names.
+This is the sensitive object of the whole exercise. It holds exactly what
+is meant to be protected, so it exists in memory for the length of one
+round trip and is never written anywhere. There is deliberately no way to
+save it: a `save` method sitting here would be an invitation to call it,
+and one call puts the client's names on the firm's disk, outliving the
+work that needed them.
 
-The format is deliberately a flat list of entries rather than a dict keyed
-by document, so that grouping entries under a case file later (phase 2)
-is a change of container, not a rewrite.
+The cost is stated rather than hidden: close the window mid-cycle and the
+real names are gone, which the window says before it happens.
 """
 
 from __future__ import annotations
 
-import json
 import unicodedata
-from dataclasses import dataclass, asdict
-from pathlib import Path
+from dataclasses import dataclass
 
 SCHEMA = 1
 
@@ -114,21 +113,6 @@ class Mapping:
         """
         return [e for e in self.entries if e.pseudonym and e.pseudonym in text]
 
-    def save(self, path) -> None:
-        payload = {
-            "schema": SCHEMA,
-            "entries": [asdict(e) for e in self.entries],
-            "used": sorted(self.used),
-        }
-        Path(path).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    @classmethod
-    def load(cls, path) -> "Mapping":
-        payload = json.loads(Path(path).read_text(encoding="utf-8"))
-        if payload.get("schema") != SCHEMA:
-            raise ValueError(f"unsupported mapping schema: {payload.get('schema')!r}")
-        return cls([Entry(**row) for row in payload["entries"]], set(payload.get("used", ())))
-
 
 def _ordered(pairs) -> list[tuple[str, str]]:
     # Longest source first: replacing "Jean Dupont" before "Dupont" keeps the
@@ -201,6 +185,13 @@ SURNAMES = (
     "Esnault", "Grandjean", "Vanel", "Dupleix", "Soler", "Mercier",
     "Nivelle", "Ferrand",
 )
+#: Invented initialisms, so a bank or an agency stays an initialism.
+#: Checked against no real organisation on purpose: these are meant to be
+#: obviously not a real name to anyone who knows the field.
+ACRONYMS = (
+    "KVT", "ZRM", "QBX", "VNK", "XPF", "JHD", "WQL", "YTB", "FKZ", "PGV",
+)
+
 COMPANY_NAMES = (
     "Orion", "Altaïr", "Vega", "Mistral", "Calypso", "Hélios", "Boréal",
     "Zephyr", "Cassiopée", "Lyra", "Pollux", "Arcturus",
@@ -218,6 +209,8 @@ def propose(kind: str, taken: set[str], text: str = "") -> str:
         candidates = list(COMPANY_NAMES)
     elif kind == "place":
         candidates = list(PLACE_NAMES)
+    elif kind == "acronym":
+        candidates = list(ACRONYMS)
     else:
         firsts = {"name_f": FIRST_NAMES_F, "name_m": FIRST_NAMES_M}.get(kind, FIRST_NAMES)
         # Step through both pools at once rather than nesting them, so the
@@ -236,6 +229,11 @@ def propose(kind: str, taken: set[str], text: str = "") -> str:
             full = f"{candidate}{suffix}"
             folded = _strip_accents(full).casefold()
             if folded in folded_taken:
+                continue
+            # Word by word as well as whole: a pseudonym that is a word
+            # of another pseudonym can be restored as the wrong person
+            # the moment a model shortens the longer one.
+            if any(_strip_accents(part).casefold() in folded_taken for part in full.split()):
                 continue
             # Accents and case are not a disguise: "Marc Rivière" collides
             # with "Marc Riviere" in the source, and a pseudonym that is

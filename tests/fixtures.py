@@ -19,6 +19,7 @@ CONTENT_TYPES = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
 <Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>
 <Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/>
+<Override PartName="/word/people.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.people+xml"/>
 <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
 <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
 </Types>"""
@@ -116,6 +117,16 @@ DOCUMENT_RELS = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationship Id="rId10" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="mailto:jean.dupont@example.fr" TargetMode="External"/>
 </Relationships>"""
 
+# The reviewer list Word 2013+ keeps. Sylvie Marchand also commented;
+# Paul Girard is named here and nowhere else, as happens when a
+# reviewer's comments were deleted but the list was not. His userId is
+# the shape a Microsoft account gives it, with an address inside.
+PEOPLE = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w15:people xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml">
+<w15:person w15:author="Sylvie Marchand"><w15:presenceInfo w15:providerId="None" w15:userId="Sylvie Marchand"/></w15:person>
+<w15:person w15:author="Paul Girard"><w15:presenceInfo w15:providerId="AD" w15:userId="S::paul.girard@cabinet-girard.fr::7f3a9c2e-1b4d-4e8a-9f60-2d5c8b1a7e43"/></w15:person>
+</w15:people>"""
+
 PARTS = [
     ("[Content_Types].xml", CONTENT_TYPES.encode("utf-8")),
     ("_rels/.rels", ROOT_RELS.encode("utf-8")),
@@ -123,6 +134,7 @@ PARTS = [
     ("word/_rels/document.xml.rels", DOCUMENT_RELS.encode("utf-8")),
     ("word/header1.xml", HEADER.encode("utf-8")),
     ("word/comments.xml", COMMENTS.encode("utf-8")),
+    ("word/people.xml", PEOPLE.encode("utf-8")),
     ("word/media/image1.png", PNG),
     ("docProps/core.xml", CORE.encode("utf-8")),
     ("docProps/app.xml", APP.encode("utf-8")),
@@ -147,6 +159,8 @@ PLANTED = {
     "Sylvie Marchand": "comment author, initials, core properties",
     "Mecanique Provencale": "body (split), header, app properties",
     "jean.dupont@example.fr": "body, single run; mailto: relationship target",
+    "Paul Girard": "people.xml only, in w15:author",
+    "paul.girard@cabinet-girard.fr": "people.xml only, inside w15:userId",
 }
 
 

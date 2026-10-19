@@ -1,8 +1,14 @@
 """Command line front end.
 
-The engine is usable before the interface exists, which is the point: the
-part that must be right is testable without a window.  The GUI comes
-later and calls exactly these functions.
+The engine is usable before the interface exists, which is the point:
+the part that must be right is testable without a window, and the window
+calls exactly these functions.
+
+Like the window, this writes no correspondence table. A cycle is one
+invocation: the table is built, used both ways, and dropped. That makes
+`anonymize` and `restore` separate commands impossible, which is the
+honest consequence of the design rather than an oversight: there is
+nothing to carry between two runs of a program that stores nothing.
 """
 
 from __future__ import annotations
@@ -11,59 +17,43 @@ import argparse
 import sys
 from pathlib import Path
 
+from . import plaintext, source, workflow
 from .engine import RefusedExport, anonymize, deanonymize
-from .mapping import Mapping, variants
+from .workflow import Decision
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="dxanon", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    out = sub.add_parser("anonymize", help="produce an anonymised copy")
-    out.add_argument("source", type=Path)
-    out.add_argument("destination", type=Path)
-    out.add_argument("--mapping", type=Path, required=True)
-
-    back = sub.add_parser("restore", help="put the real values back")
-    back.add_argument("source", type=Path)
-    back.add_argument("destination", type=Path)
-    back.add_argument("--mapping", type=Path, required=True)
-    back.add_argument(
-        "--allow-partial",
-        action="store_true",
-        help="accept a document where some pseudonyms never came back",
-    )
-
     scan = sub.add_parser("scan", help="show what would be masked, and decide nothing")
     scan.add_argument("source", type=Path, help="a .docx or a .txt")
-    scan.add_argument("--mapping", type=Path, help="write the proposed table here")
 
-    add = sub.add_parser("add", help="declare one real value and its pseudonym")
-    add.add_argument("--mapping", type=Path, required=True)
-    add.add_argument("real")
-    add.add_argument("pseudonym")
-    add.add_argument("--kind", default="name")
-    add.add_argument(
-        "--with-variants",
-        action="store_true",
-        help="also declare the usual spellings of this name",
+    mask = sub.add_parser(
+        "mask",
+        help="mask a copy and print the table, for a cycle you drive yourself",
     )
+    mask.add_argument("source", type=Path)
+    mask.add_argument("destination", type=Path)
+
+    check = sub.add_parser(
+        "roundtrip",
+        help="mask and restore in one go, to prove a document survives the trip",
+    )
+    check.add_argument("source", type=Path)
+    check.add_argument("destination", type=Path, nargs="?")
 
     args = parser.parse_args(argv)
-
-    if args.command == "add":
-        return _add(args)
     if args.command == "scan":
         return _scan(args)
-    return _convert(args)
+    if args.command == "mask":
+        return _mask(args)
+    return _roundtrip(args)
 
 
 def _scan(args) -> int:
-    from . import workflow
-    from .workflow import Decision
-
-    text, images = _read_any(args.source)
-    grid = workflow.build(text, images=images)
+    text, images, known = _read_any(args.source)
+    grid = workflow.build(text, images=images, known=known)
 
     width = max((len(r.value) for r in grid.rows), default=10)
     for row in grid.rows:
@@ -77,60 +67,94 @@ def _scan(args) -> int:
         print(f"  IMAGE NON TRAITÉE : {name} (le texte qu'elle contient n'est pas lu)")
     for problem in grid.conflicts():
         print(f"  CONFLIT : {problem}")
-
-    if args.mapping:
-        grid.to_mapping().save(args.mapping)
-        print(f"\nTable proposée écrite dans {args.mapping}. Relisez-la avant de l'utiliser.")
     return 0
 
 
-def _read_any(path: Path) -> tuple[str, list[str]]:
-    if path.suffix.lower() != ".docx":
-        return path.read_text(encoding="utf-8"), []
-    from . import textmap
-    from .package import Package
+def _mask(args) -> int:
+    """Mask, and print the table to standard output.
 
-    package = Package.open(path)
-    chunks = [textmap.full_text(textmap.parse(p.data)) for p in package.stories()]
-    return "\n".join(c for c in chunks if c), [p.name for p in package.images()]
+    Printed rather than saved, deliberately. Whoever runs this decides
+    where it goes, and a terminal that is closed takes it with it. The
+    warning is there because the alternative is someone piping it into a
+    file next to the document it unmasks.
+    """
+    text, images, known = _read_any(args.source)
+    grid = workflow.build(text, images=images, known=known)
+    mapping = grid.to_mapping()
 
+    conflicts = grid.conflicts()
+    if conflicts:
+        for problem in conflicts:
+            print(f"CONFLIT : {problem}", file=sys.stderr)
+        return 2
 
-def _add(args) -> int:
-    mapping = Mapping.load(args.mapping) if args.mapping.exists() else Mapping()
-    mapping.add(args.real, args.pseudonym, kind=args.kind)
-    if args.with_variants:
-        real_forms = variants(args.real)
-        fake_forms = variants(args.pseudonym)
-        for real, fake in zip(real_forms, fake_forms):
-            mapping.add(real, fake, kind=args.kind, note=f"variant of {args.real}")
-    mapping.save(args.mapping)
-    print(f"{len(mapping.entries)} entries in {args.mapping}")
-    return 0
-
-
-def _convert(args) -> int:
-    mapping = Mapping.load(args.mapping)
     try:
-        if args.command == "anonymize":
+        if args.source.suffix.lower() == ".docx":
             report = anonymize(args.source, args.destination, mapping)
+            for name in report.images:
+                print(f"  IMAGE NON TRAITÉE : {name}", file=sys.stderr)
         else:
-            report = deanonymize(
-                args.source, args.destination, mapping, require_all=not args.allow_partial
-            )
+            args.destination.write_text(plaintext.anonymize(text, mapping), encoding="utf-8")
     except RefusedExport as refused:
-        print("REFUSED, nothing was written:", file=sys.stderr)
+        print("REFUSÉ, rien n'a été écrit :", file=sys.stderr)
         for residue in refused.residues:
             print(f"  {residue.value!r} -> {residue.where}", file=sys.stderr)
         return 2
 
-    print(f"{report.replacements} replacement(s) in {len(report.parts_changed)} part(s)")
-    for name in report.parts_changed:
-        print(f"  changed {name}")
-    for name in report.images:
-        print(f"  IMAGE NOT PROCESSED: {name} (text inside it is not read)")
-    for value in report.unresolved:
-        print(f"  NOT RESTORED: {value}")
+    print(f"# {args.destination}")
+    print("# Table de correspondance. Elle n'est enregistrée nulle part :")
+    print("# sans elle, le document masqué ne peut plus être restauré.")
+    for entry in mapping.entries:
+        print(f"{entry.pseudonym}\t{entry.real}")
     return 0
+
+
+def _roundtrip(args) -> int:
+    """Mask and restore in one invocation, and say whether anything moved."""
+    text, images, known = _read_any(args.source)
+    mapping = workflow.build(text, images=images, known=known).to_mapping()
+    destination = args.destination or args.source.with_name(_masked_name(args.source, mapping))
+
+    try:
+        if args.source.suffix.lower() == ".docx":
+            anonymize(args.source, destination, mapping)
+            restored = destination.with_name(f"{args.source.stem}_FINAL.docx")
+            deanonymize(destination, restored, mapping, require_all=False)
+            same = _read_any(args.source)[0] == _read_any(restored)[0]
+        else:
+            masked = plaintext.anonymize(text, mapping)
+            destination.write_text(masked, encoding="utf-8")
+            back, _ = plaintext.deanonymize(masked, mapping, require_all=False)
+            same = back == text
+    except RefusedExport as refused:
+        print("REFUSÉ, rien n'a été écrit :", file=sys.stderr)
+        for residue in refused.residues:
+            print(f"  {residue.value!r} -> {residue.where}", file=sys.stderr)
+        return 2
+
+    print(f"{len(mapping.entries)} correspondance(s)")
+    print("aller-retour exact :", "oui" if same else "NON")
+    return 0 if same else 1
+
+
+def _masked_name(path: Path, mapping) -> str:
+    """The output file name, masked like everything else.
+
+    "Dossier_Benzaoui.docx" came out as "Dossier_Benzaoui_ANON.docx".
+    The refusal check reads what is inside the package, not what the
+    package is called, so it had nothing to say: the client's name left
+    the office in the one place a reader sees before opening anything.
+    """
+    from .engine import _replace_all
+
+    stem = _replace_all(path.stem, mapping.forward())
+    return f"{stem}_ANON{path.suffix}"
+
+
+def _read_any(path: Path) -> tuple[str, list[str], list[str]]:
+    if path.suffix.lower() != ".docx":
+        return path.read_text(encoding="utf-8"), [], []
+    return source.read_document(path)
 
 
 if __name__ == "__main__":

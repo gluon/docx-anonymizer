@@ -68,7 +68,7 @@ BIRTH_DATE = re.compile(
 
 #: A French postcode with the town after it: the pair locates a person far
 #: more precisely than either half alone.
-POSTCODE_TOWN = re.compile(r"\b(\d{5}\s+[A-ZÀ-Ý][\wà-ÿ]+(?:[-\s][A-ZÀ-Ý]?[\wà-ÿ]+)*)")
+POSTCODE_TOWN = re.compile(r"\b(\d{5}[ \t]+[A-ZÀ-Ý][\wà-ÿ]+(?:[- \t][A-ZÀ-Ý]?[\wà-ÿ]+)*)")
 
 #: A street line: number, street type, name.
 STREET = re.compile(
@@ -200,12 +200,18 @@ WORD = r"[A-ZÀ-Ý][\wà-ÿ]*(?:[-'’][\w\wà-ÿ][\wà-ÿ]*)*"
 #: capitals, often two or three words long: taking "MECANIQUE PROVENCALE"
 #: as two findings produced half-names in the grid and a table entry for
 #: "MECANIQUE" that never matched anything on its own.
-ALL_CAPS = re.compile(r"\b[A-ZÀ-Ý][A-ZÀ-Ý]{1,}(?:[-'’][A-ZÀ-Ý]+)*(?:\s+[A-ZÀ-Ý][A-ZÀ-Ý'’\-]+)*\b")
+#: A run never crosses a line break. With ``\s+`` between words, a
+#: signature block read as one name: "Barreau de Marseille\nCabinet
+#: Moreau" came out as the single value "Marseille Cabinet Moreau".
+_GAP = r"[ \t]+"
+ALL_CAPS = re.compile(
+    rf"\b[A-ZÀ-Ý][A-ZÀ-Ý]{{1,}}(?:[-'’][A-ZÀ-Ý]+)*(?:{_GAP}[A-ZÀ-Ý][A-ZÀ-Ý'’\-]+)*\b"
+)
 #: Runs of title-case words read as one token too, for the same reason as
 #: ALL_CAPS: "Mecanique Provencale" appearing without its company form in
 #: a header produced three separate rows and three unrelated pseudonyms.
 _TITLE_WORD = r"[A-ZÀ-Ý][a-zà-ÿ]+(?:[-'’](?:[A-ZÀ-Ý]|[a-zà-ÿ])[a-zà-ÿ]*)*"
-CAPITALISED = re.compile(rf"\b{_TITLE_WORD}(?:\s+{_TITLE_WORD})*\b")
+CAPITALISED = re.compile(rf"\b{_TITLE_WORD}(?:{_GAP}{_TITLE_WORD})*\b")
 
 #: Closed vocabulary of the field. A capitalised word in here is not a name.
 LEGAL_LEXICON = frozenset(
@@ -223,6 +229,7 @@ LEGAL_LEXICON = frozenset(
     Employeur Salarié Salariée Demandeur Demanderesse Défendeur Défenderesse
     Requérant Partie Parties Conseil Avocat Barreau Greffe Audience Jugement
     Arrêt Ordonnance Décision Attestation Pièce Pièces Bordereau Conclusions
+    Bulletin Bulletins Recueil Revue Chronique Note Observations Commentaire
     Monsieur Madame Mademoiselle Maître Docteur Professeur
     Janvier Février Mars Avril Mai Juin Juillet Août Septembre Octobre
     Novembre Décembre Lundi Mardi Mercredi Jeudi Vendredi Samedi Dimanche
@@ -259,6 +266,10 @@ DOCUMENT_FURNITURE = frozenset(
     PIECES PIÈCES BORDEREAU PRODUCTION DEBATS DÉBATS DEMANDES PRETENTIONS
     PRÉTENTIONS MOYENS EXPOSE EXPOSÉ PROCEDURE PROCÉDURE HISTORIQUE
     RCS SIRET SIREN IBAN BIC TVA URSSAF SMIC
+    Confidentiel Confidentielle Copie Original Brouillon Version Final Finale
+    Projet Note Memo Mémo Fiche Synthese Synthèse Rapport Compte Rendu
+    Document Documents Lettre Courriel Annexe Annexes Extrait Extraits
+    Cabinet Etude Étude Selarl Scp Barreau Ordre Batonnier Bâtonnier
     Telephone Téléphone Portable Fax Courriel Mail Adresse Email
     Reference Référence Dossier Affaire Numero Numéro
     Ancien Ancienne Nouveau Nouvelle Present Présent Presente Présente
@@ -268,6 +279,30 @@ DOCUMENT_FURNITURE = frozenset(
     Cass Civ Soc Crim Com Bull Dalloz JCP AJDA RJS Gaz Pal CJUE CEDH
     TGI RG CA CE TJ Pourvoi Arret Arrêt Attendu Juris Jurisprudence
     SAS SASU SARL EURL SA SCI SNC SCOP SCP SELARL GIE Societe Société Ste Sté
+    """.split()
+)
+
+#: The furniture of a letter. A mail is mostly greeting, thanks and
+#: sign-off, and every one of those words is capitalised: without this
+#: list a thousand-word exchange spent eight of its rows on "Merci",
+#: "Chère Consoeur" and the "RE" of its own subject line.
+CORRESPONDENCE = frozenset(
+    w.upper() for w in """
+    Cher Chère Chers Chères Bonjour Bonsoir Madame Monsieur Messieurs
+    Confrère Consoeur Consœur Confrères Consoeurs Consœurs Maitre Maître
+    Merci Remerciements Cordialement Confraternellement Sincèrement
+    Salutations Respectueusement Amicalement Bien Veuillez Agréer
+    Croire Expression Sentiments Considération Distinguée Distinguées
+    Dévoué Dévouée Sentiments Meilleures Excellente Réception Accusé
+    Dites Dites-moi Dis Dis-moi Rappelle Rappelle-moi Tiens Tiens-moi
+    Merci-beaucoup Pardon Désolé Desole Navré Navre
+    RE TR FW FWD REF Objet Sujet Copie Transfert Transféré Transfere
+    Pièce Pieces Jointe Jointes Attaché Attachee Ci-joint Ci-dessous
+    Un Deux Trois Quatre Cinq Six Sept Huit Neuf Dix Onze Douze
+    Premier Premièrement Deuxièmement Troisièmement Quatrièmement
+    Situation Question Questions Réponse Reponse Point Points Sujet
+    Associés Associes Partenaires Collaborateurs Confraternelle
+    Entretien Échange Echange Appel Téléphonique Telephonique Courrier
     """.split()
 )
 
@@ -354,7 +389,8 @@ def _fold(value: str) -> str:
 
 
 _EXCLUDED = frozenset(
-    _fold(w).upper() for w in (LEGAL_LEXICON | SENTENCE_OPENERS | DOCUMENT_FURNITURE)
+    _fold(w).upper()
+    for w in (LEGAL_LEXICON | SENTENCE_OPENERS | DOCUMENT_FURNITURE | CORRESPONDENCE)
 )
 
 
@@ -450,7 +486,57 @@ def find(text: str, known: list[str] | None = None) -> list[Finding]:
                    else "mot capitalisé hors vocabulaire juridique")
             findings.append(Finding(word, start, match.end(), "candidate", certainty, why))
 
+    findings.extend(_other_spellings(text, findings))
     return _deduplicate(findings)
+
+
+#: Shorter than this, a lower-case match is far more likely to be an
+#: ordinary word than the same name written carelessly.
+_MIN_VARIANT = 4
+
+
+def _other_spellings(text: str, findings: list[Finding]) -> list[Finding]:
+    """The same name written in a case nobody looked for.
+
+    Every rule above starts from a capital letter, so a surname typed in
+    lower case mid-sentence is invisible to all of them. In the mail
+    fixture, "priver benzaoui des trajets" went out in the masked copy
+    with the client's real name in it, and nothing anywhere lit up.
+
+    Once a name has been found in any spelling, its other spellings are
+    searchable: this looks for them case-insensitively and offers what it
+    finds. It offers rather than decides, because a surname can also be
+    an ordinary word, and masking every "roux" in a file that mentions a
+    Madame ROUX would wreck the text. The row says where it comes from so
+    the choice is informed.
+    """
+    # Only names something in the sentence vouched for: a civility, a
+    # company form, or the user's own declaration. Searching every
+    # capitalised candidate instead turned "Bulletin", kept as a case-law
+    # marker, into a reason to mask "bulletins de paie".
+    vouched = {f.value for f in findings if f.kind in ("name", "org", "declared")}
+    known = {
+        word
+        for value in vouched
+        for word in value.replace("'", " ").replace("’", " ").split()
+        if len(word) >= _MIN_VARIANT and not _is_excluded(word)
+    }
+    taken = [(f.start, f.end) for f in findings]
+    extra: list[Finding] = []
+
+    for value in sorted(known):
+        for match in re.finditer(rf"\b{re.escape(value)}\b", text, re.IGNORECASE):
+            if match.group(0) == value:
+                continue
+            start, end = match.span()
+            if any(start < t_end and end > t_start for t_start, t_end in taken):
+                continue
+            taken.append((start, end))
+            extra.append(Finding(
+                match.group(0), start, end, "candidate", Certainty.CONFIRM,
+                f"même nom que « {value} », écrit ici sans majuscule",
+            ))
+    return extra
 
 
 _RANK = {Certainty.CERTAIN: 0, Certainty.CASE_LAW: 1, Certainty.CONFIRM: 2}

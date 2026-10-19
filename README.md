@@ -45,6 +45,16 @@ always a typo, and it identifies its holder just as well.
 **Declared names and their spellings**, generated from what the user
 typed, never guessed from the document.
 
+**Other spellings of a name already found.** Every rule above starts
+from a capital letter, so a surname typed in lower case mid-sentence is
+invisible to all of them: in the mail fixture, "priver benzaoui des
+trajets" went out in the masked copy with the client's real name in it.
+Once a name has been found in any spelling, its other spellings are
+searchable. This runs only on names something in the sentence vouched
+for, a civility, a company form or the user's own declaration, because a
+surname can also be a common noun and masking every "bulletin" in a file
+that cites the Bulletin would wreck the text.
+
 **Over-detection.** Rather than recognising names, eliminate what cannot
 be one — known legal vocabulary, sentence openers, the structural words a
 pleading is built from — and offer the rest. Exhaustive by construction
@@ -65,12 +75,20 @@ surname with a cited party must not be shielded by it.
 Measured on a realistic two-page pleading (`tests/sample_conclusions.txt`)
 and pinned as a budget test:
 
-| | |
-| --- | --- |
-| Rows to arbitrate | 35 |
-| Identifiers found with certainty | 12 |
-| Cited parties correctly kept | 3 |
-| People or companies in the file that were missed | 0 |
+| | Conclusions, 2 pages | Mail thread, 1055 words |
+| --- | --- | --- |
+| Rows to arbitrate | 35 | 47 |
+| Identifiers found with certainty | 12 | 14 |
+| Cited parties correctly kept | 3 | 3 |
+| People or companies missed | 0 | 0 |
+
+Both figures are pinned as budget tests, so a change to the lexicon or
+the patterns cannot quietly make the grid unusable in either direction.
+
+The mail thread was the harder document, and it is the one that found the
+real defects: a letter is mostly greeting and sign-off, a company is
+named in full once and in shorthand afterwards, and a signature block
+puts a town and a firm on consecutive lines.
 
 ## What the masked text reads like
 
@@ -143,12 +161,39 @@ public and has no network code in it. The guard makes that absence
 visible to someone who cannot read the source. Loopback is allowed and
 counted separately, since it never leaves the machine.
 
+## One shot, and nothing on disk
+
+The correspondence table maps every pseudonym back to the client. Written
+to disk it becomes the most dangerous file in the case folder, outliving
+the work that needed it, and then the tool needs a delete button to remove
+what it should never have written.
+
+So it is not written. The table exists in memory for the length of one
+round trip: mask, work with the AI, restore, done. There is deliberately
+no `save` on `Mapping`, because a save method is an invitation to call it.
+
+**The cost, stated rather than discovered.** Close the window mid-cycle
+and the real names are gone, and any document already masked can never be
+turned back. The window says so in three places: a standing line on the
+home screen while a cycle is live, a confirmation on "Effacer le cycle",
+and a confirmation on closing the window itself.
+
+**Erasing a cycle** is therefore just forgetting the table. There are no
+files to hunt down, no leftovers in a hidden application folder, and
+nothing a later audit of the firm's disk can turn up.
+
+`tests/test_no_persistence.py` enforces this by watching the filesystem
+rather than by reading the code: a full text cycle and a full file cycle
+must leave behind exactly the files that were asked for and nothing else.
+
 ## Not covered, by design
 
 - **Text inside images.** A scanned signature, a stamp, a screenshot of a
   mail client. They are counted and reported, never silently passed over.
 - **PDF and scanned documents.** Word files only.
-- **Names nobody declared and that detection missed.** See the limit above.
+- **A name nobody declared, never capitalised anywhere in the document.**
+  Lower-case spellings are now found, but only of names already seen with
+  a capital somewhere.
 - **Judgement about what is sensitive.** The tool applies what it is told.
 - **Re-identification from context.** A twelve-person company in a named
   town stays recognisable with every name removed.
@@ -159,13 +204,21 @@ counted separately, since it never leaves the machine.
 pip install -e .
 PYTHONPATH=src:tests python -m unittest discover -s tests -v
 
-dxanon scan conclusions.docx --mapping case.json
-dxanon anonymize conclusions.docx conclusions_ANON.docx --mapping case.json
-dxanon restore conclusions_ANON_corrige.docx conclusions_final.docx --mapping case.json
+dxanon scan conclusions.docx
+dxanon mask conclusions.docx conclusions_ANON.docx
+dxanon roundtrip conclusions.docx
 ```
 
-`scan` decides nothing: it prints what would be masked and writes a
-proposed table for review.
+`scan` decides nothing: it prints what would be masked and stops.
+
+`mask` writes the masked copy and prints the table to standard output,
+never to a file: whoever runs it decides where it goes, and a closed
+terminal takes it with it.
+
+`roundtrip` masks and restores in one invocation and reports whether the
+document came back unchanged. There is no separate `restore` command,
+which is the honest consequence of storing nothing: there is nothing to
+carry between two runs of a program that keeps no state.
 
 The window is `python -m dxanon` (needs PySide6). `python -m dxanon
 --self-check` exercises every layer and exits, which is how the Windows
@@ -177,14 +230,22 @@ rest of the case file.
 
 ## What is not verified
 
-**The window.** The test suite runs headless, so `gui.py` is parsed,
-checked for dead imports and for calls into functions that still exist,
-and imported against a real PySide6 in CI. None of that is the same as
-opening it. Until someone uses it on Windows, its behaviour is unverified.
+**The window.** `tests/test_gui_qt.py` builds it on Qt's offscreen
+platform and drives it with clicks: the five screens, the help from
+each, the refusals, the confirmations, the keyboard path. It has also
+been run by hand on macOS (Python 3.14, PySide6 6.12). It has not been
+run on Windows. A segfault on quit was reported once on macOS and could
+not be reproduced; the lazy type creation seen in its trace now happens
+at import instead of at closing time, which is checked at startup, but
+the crash itself is not proven gone.
 
-**Word itself.** The tests assert the XML and the text. Whether Word
-renders a produced file exactly as before has to be checked by opening
-one.
+**Word itself.** A document made by Word for Mac 16.114, with a header,
+a footer, tracked changes and a comment, was passed through the window
+and reopened in Word: no repair prompt, same layout, the reviewer's
+name gone from the comment, the revisions, people.xml and the
+properties; the return trip gave back the original. That is one
+document on one version of Word. A name whose formatting changes in the
+middle (half bold) comes back in the formatting of its first part.
 
 **The Windows executable.** It has never been built or run. The build job
 exists and the bundle is checked by running `--self-check` against it,

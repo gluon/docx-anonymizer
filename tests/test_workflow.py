@@ -165,59 +165,81 @@ class OnTheRealisticSample(unittest.TestCase):
             self.assertIn(party, masked, party)
 
 
-class PersonalLexicon(unittest.TestCase):
-    """A tool that asks the same question every week stops being read."""
+
+class PseudonymsMustNotOverlap(unittest.TestCase):
+    """No subject may be given a word of another subject's pseudonym.
+
+    "Camille" was given "Bruno" while another person was given "Bruno
+    Delacroix". The restoration replaces the longer first, so the full
+    text round-trips fine and the defect stays hidden, until a model
+    shortens "Bruno Delacroix" to "le Docteur Bruno" and the document
+    comes home naming the wrong person. There is nothing to notice it
+    with, which is what makes it worth a test.
+    """
 
     def setUp(self):
-        import tempfile
-        from dxanon.lexicon import Lexicon
+        self.text = SAMPLE.read_text(encoding="utf-8")
+        self.grid = workflow.build(self.text)
 
-        self.path = Path(tempfile.mkdtemp()) / "mots.txt"
-        self.lexicon = Lexicon.load(self.path)
+    def test_no_pseudonym_is_a_word_of_another_subject(self):
+        by_group: dict[str, set[str]] = {}
+        for row in self.grid.rows:
+            if row.decision is Decision.REPLACE and row.is_person_like:
+                by_group.setdefault(row.group, set()).update(row.pseudonym.split())
 
-    def test_a_word_kept_once_is_kept_next_time(self):
-        text = "Le Cachet du Cabinet figure sur la piece."
-        grid = workflow.build(text)
-        grid.set_decision("Cachet", Decision.KEEP)
-        workflow.remember_decisions(grid, self.lexicon)
-        self.lexicon.save()
+        for group, words in by_group.items():
+            for other, other_words in by_group.items():
+                if group == other:
+                    continue
+                shared = words & other_words
+                self.assertFalse(shared, f"{group} and {other} share {shared}")
 
-        from dxanon.lexicon import Lexicon
+    def test_a_shortened_pseudonym_cannot_restore_as_someone_else(self):
+        """The failure the rule above prevents, played out."""
+        mapping = self.grid.to_mapping()
+        two_word = [e for e in mapping.entries if len(e.pseudonym.split()) == 2]
 
-        again = workflow.build(text, lexicon=Lexicon.load(self.path))
-        row = next(r for r in again.rows if r.value == "Cachet")
-        self.assertEqual(row.decision, Decision.KEEP)
+        for entry in two_word[:6]:
+            shortened = entry.pseudonym.split()[-1]
+            match = mapping.for_pseudonym(shortened)
+            if match is not None:
+                self.assertEqual(
+                    match.real.split()[-1], entry.real.split()[-1],
+                    f"{shortened} restores to {match.real}, not to {entry.real}",
+                )
 
-    def test_masking_it_later_overrides_what_was_remembered(self):
-        text = "Le Cachet du Cabinet figure sur la piece."
-        grid = workflow.build(text)
-        grid.set_decision("Cachet", Decision.KEEP)
-        workflow.remember_decisions(grid, self.lexicon)
 
-        grid.set_decision("Cachet", Decision.REPLACE)
-        workflow.remember_decisions(grid, self.lexicon)
-        self.assertFalse(self.lexicon.knows("Cachet"))
+class AFirmNamedAfterItsLawyer(unittest.TestCase):
+    """The long form decides what a subject is, and decides alone.
 
-    def test_an_identifier_is_never_remembered(self):
-        """Not masking one IBAN says nothing about IBANs."""
-        grid = workflow.build("IBAN FR1420041010050500013M02606 au dossier.")
-        for row in grid.rows:
-            row.decision = Decision.KEEP
-        workflow.remember_decisions(grid, self.lexicon)
-        self.assertFalse(any("FR14" in w for w in self.lexicon.words))
+    "Cabinet Moreau" and "Claire Moreau" share a surname, as a firm and
+    its founder do. Letting the short form "Moreau" vote made the whole
+    group an organisation, so the lawyer came out as "Orion Industries"
+    and the footer read "Orion Industries, avocate".
+    """
 
-    def test_a_cited_party_is_not_remembered_either(self):
-        text = "Cass. soc. 25 septembre 2013, Societe Delattre, pourvoi n° 12-12.883."
-        grid = workflow.build(text)
-        workflow.remember_decisions(grid, self.lexicon)
-        self.assertFalse(self.lexicon.knows("Delattre"))
+    TEXT = ("Le Cabinet Moreau vous ecrit. Claire Moreau, avocate, suit "
+            "le dossier. Moreau confirme.")
 
-    def test_the_file_is_readable_by_a_human(self):
-        self.lexicon.remember("Cachet")
-        self.lexicon.save()
-        content = self.path.read_text(encoding="utf-8")
-        self.assertIn("Cachet", content)
-        self.assertIn("#", content, "the file should explain itself")
+    def test_the_lawyer_gets_a_person_name(self):
+        rows = {r.value: r for r in workflow.build(self.TEXT).rows}
+        self.assertEqual(len(rows["Claire Moreau"].pseudonym.split()), 2)
+        self.assertEqual(
+            rows["Moreau"].pseudonym,
+            rows["Claire Moreau"].pseudonym.split()[-1],
+            "the firm and the lawyer must share one surname",
+        )
+
+    def test_a_company_is_still_a_company(self):
+        """The rule must not cost the case it was built for."""
+        rows = {r.value: r for r in workflow.build("La SAS Mecanique Provencale conteste.").rows}
+        pseudonym = rows["Mecanique Provencale"].pseudonym
+        self.assertNotIn(pseudonym.split()[0], ("Marc", "Claire", "Fabrice", "Nadia"))
+
+    def test_a_long_company_name_is_still_a_company(self):
+        text = "embauche par la societe TRANSPORTS FRIGORIFIQUES DU LITTORAL, dont le siege"
+        rows = {r.value: r for r in workflow.build(text).rows}
+        self.assertGreater(len(rows["TRANSPORTS FRIGORIFIQUES DU LITTORAL"].pseudonym.split()), 2)
 
 
 if __name__ == "__main__":

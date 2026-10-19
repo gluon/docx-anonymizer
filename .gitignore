@@ -4,6 +4,7 @@ __pycache__/
 build/
 dist/
 .venv/
+.venv312/
 venv/
 
 # Never commit a correspondence table or a real document.

@@ -28,12 +28,8 @@ def say(message: str, error: bool = False) -> None:
 
 def self_check() -> int:
     """Exercise every layer the bundle needs, then say so."""
-    import tempfile
-
     from . import plaintext, workflow
-    from .mapping import Mapping
     from .netguard import NetworkGuard
-    from .session import Session
 
     guard = NetworkGuard.install()
 
@@ -52,14 +48,6 @@ def self_check() -> int:
     if not guard.installed:
         say("ÉCHEC : le garde-fou réseau n'est pas installé", error=True)
         return 1
-
-    with tempfile.TemporaryDirectory() as folder:
-        session = Session.create(folder, "auto-test", mode="text")
-        session.mapping = Mapping(mapping.entries)
-        session.save()
-        if not Session.load(session.folder).entries_count():
-            say("ÉCHEC : la session ne se recharge pas", error=True)
-            return 1
 
     say(f"OK : {len(grid.rows)} élément(s) détecté(s), aller-retour exact, "
         f"garde-fou réseau actif, {len(missing)} pseudonyme(s) non restitué(s)")

@@ -18,6 +18,19 @@ W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 AUTHOR = f"{{{W}}}author"
 INITIALS = f"{{{W}}}initials"
 
+#: Word 2013 and later also keep a list of everyone who commented or
+#: tracked a change, in word/people.xml, under a different namespace.
+W15 = "http://schemas.microsoft.com/office/word/2012/wordml"
+PERSON_AUTHOR = f"{{{W15}}}author"
+#: Usually the same name again; for a Microsoft account, an address.
+PERSON_USER_ID = f"{{{W15}}}userId"
+
+#: Every attribute Word fills with who did something. One list, read by
+#: the detection of identities and by the substitution alike: when the
+#: engine knew w:author and not w15:author, a document with one comment
+#: was refused, the name being left in people.xml.
+IDENTITY_ATTRIBUTES = (AUTHOR, INITIALS, PERSON_AUTHOR, PERSON_USER_ID)
+
 #: Parts whose <w:t> nodes carry visible document text.
 STORY_PATTERNS = (
     re.compile(r"^word/document\d*\.xml$"),
