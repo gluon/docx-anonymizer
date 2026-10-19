@@ -53,6 +53,12 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: windows
     runs-on: windows-latest
+    # Creating the release writes to the repository, and the default
+    # token is read-only on a repository that has never granted it more.
+    # That is why the first build that worked produced an executable,
+    # uploaded it as an artifact, and then failed to publish it.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
