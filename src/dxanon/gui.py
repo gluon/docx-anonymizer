@@ -454,7 +454,8 @@ class Window(QMainWindow):
         mapping = self.grid.to_mapping()
         try:
             if self.source_file is not None:
-                destination = self.source_file.with_name(f"{self.source_file.stem}_ANON.docx")
+                destination = self.source_file.with_name(
+                    f"{_masked_stem(self.source_file.stem, mapping)}_ANON.docx")
                 engine.anonymize(self.source_file, destination, mapping)
                 shown = f"Fichier écrit :\n{destination}"
             else:
@@ -548,7 +549,8 @@ class Window(QMainWindow):
         if not chosen:
             return
         source = Path(chosen)
-        destination = source.with_name(f"{source.stem.replace('_ANON', '')}_FINAL.docx")
+        stem = _restored_stem(source.stem.replace("_ANON", ""), mapping)
+        destination = source.with_name(f"{stem}_FINAL.docx")
         try:
             engine.deanonymize(source, destination, mapping,
                                require_all=not self.allow_partial.isChecked())
@@ -666,6 +668,27 @@ def _alert(parent: QWidget, icon: QMessageBox.Icon, title: str, body: str) -> No
     box.setText(title)
     box.setInformativeText(body)
     box.exec()
+
+
+def _masked_stem(stem: str, mapping: Mapping) -> str:
+    """The file name that travels with the masked document, masked too.
+
+    The file went out as ``Dossier_Benzaoui_ANON.docx``: the refusal check
+    reads every entry inside the package, but not the name of the package
+    itself, and the name is what the chat window shows first. A copy of
+    the table does the masking, so that a value seen only in the file name
+    is not recorded as used by the document, which would make the return
+    trip demand a pseudonym the document never contained.
+    """
+    try:
+        return plaintext.anonymize(stem, Mapping(mapping.entries))
+    except RefusedExport:
+        return "document"
+
+
+def _restored_stem(stem: str, mapping: Mapping) -> str:
+    restored, _ = plaintext.deanonymize(stem, Mapping(mapping.entries), require_all=False)
+    return restored
 
 
 def _cell(text: str) -> QTableWidgetItem:

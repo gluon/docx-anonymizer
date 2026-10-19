@@ -17,6 +17,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 try:
     from PySide6.QtCore import Qt, QTimer
@@ -208,6 +209,56 @@ class WindowTests(unittest.TestCase):
         self.click("Remettre les vrais noms")
         self.assertEqual(self.seen_dialogs, ["Restauration refusée, rien n'a été écrit"])
         self.assertEqual(self.at(), RETURN)
+
+    # --------------------------------------------------------------- docx
+    def test_docx_export_through_the_window_keeps_the_name_out(self):
+        import tempfile
+        import zipfile
+        from unittest import mock
+        from PySide6.QtWidgets import QFileDialog
+        import fixtures
+
+        folder = Path(tempfile.mkdtemp())
+        source = fixtures.build(folder / "Dossier_Dupont.docx")
+        with mock.patch.object(QFileDialog, "getOpenFileName", return_value=(str(source), "")):
+            self.click("Ouvrir un document Word")
+        self.assertEqual(self.at(), GRID)
+        self.click("Produire la version anonyme")
+        self.assertEqual(self.at(), RESULT)
+
+        written = [p for p in folder.iterdir() if p.name.endswith("_ANON.docx")]
+        self.assertEqual(len(written), 1)
+        self.assertNotIn("Dupont", written[0].name)
+        with zipfile.ZipFile(written[0]) as archive:
+            blob = b"".join(archive.read(n) for n in archive.namelist())
+        for real in fixtures.PLANTED:
+            self.assertNotIn(real.encode(), blob)
+
+    @unittest.expectedFailure
+    def test_docx_comes_back_untouched_and_is_restored(self):
+        """Fails today: engine.deanonymize demands every pseudonym in the
+        table, including those that never fired (a short form consumed by
+        a longer one, a word seen only in the file name), where the
+        pasted-text mode demands only those that fired. Out of scope for
+        this branch: engine.py."""
+        import tempfile
+        from unittest import mock
+        from PySide6.QtWidgets import QFileDialog
+        import fixtures
+
+        folder = Path(tempfile.mkdtemp())
+        source = fixtures.build(folder / "Dossier_Dupont.docx")
+        with mock.patch.object(QFileDialog, "getOpenFileName", return_value=(str(source), "")):
+            self.click("Ouvrir un document Word")
+        self.click("Produire la version anonyme")
+        written = next(p for p in folder.iterdir() if p.name.endswith("_ANON.docx"))
+        self.click("J'ai la réponse de l'IA, remettre les vrais noms")
+        self.answer_next_dialog()
+        with mock.patch.object(QFileDialog, "getOpenFileName", return_value=(str(written), "")):
+            self.click("Ouvrir un document corrigé")
+        self.assertEqual(self.seen_dialogs, [])
+        self.assertTrue((folder / "Dossier_Dupont_FINAL.docx").exists(),
+                        sorted(p.name for p in folder.iterdir()))
 
     # -------------------------------------------------------------- close
     def test_close_without_cycle_does_not_ask(self):
