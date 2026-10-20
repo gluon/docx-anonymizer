@@ -177,6 +177,28 @@ class TheTableOnDisk(unittest.TestCase):
         self.assertEqual(outcome.text, MAIL)
         self.assertEqual(outcome.unresolved, [])
 
+    def test_a_reloaded_case_still_refuses_a_reworded_pseudonym(self):
+        """Per piece, which is the only level the question means anything.
+
+        What each piece consumed is saved with it. Without that, a
+        reopened case cannot tell a pseudonym that was reworded from one
+        that belonged to another piece, so it stops refusing and reports
+        instead, and a half-restored document comes home as a warning
+        nobody has to act on.
+        """
+        from dxanon.case import Case as C
+
+        reopened = C.load(self.path)
+        piece = reopened.pieces[0]
+        self.assertTrue(piece.used, "what the piece consumed was not saved")
+
+        pseudonym = next(iter(piece.used))
+        entry = reopened.table.for_real(pseudonym)
+        broken = self.masked["mail"].replace(entry.pseudonym, "Quelquun Dautre")
+        outcome = reopened.restore_text(broken, label="mail")
+        self.assertFalse(outcome.ok)
+        self.assertIn(entry.pseudonym, outcome.refused)
+
     def test_a_reloaded_case_keeps_its_name_and_its_pieces(self):
         reopened = Case.load(self.path)
         self.assertEqual(reopened.name, "Lenoir c/ Thermopack")

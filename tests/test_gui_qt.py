@@ -651,7 +651,9 @@ class WindowTests(unittest.TestCase):
                                    return_value=(str(source), "")):
                 self.click("Ajouter un document Word")
         self.assertEqual(self.window.pieces_table.rowCount(), 1)
-        self.assertTrue(any("déjà" in text for text in self.seen_dialogs),
+        # answer_next_dialog records box.text(), which carries the title:
+        # the reason is in the informative text under it.
+        self.assertTrue(any("Pièce non ajoutée" in text for text in self.seen_dialogs),
                         self.seen_dialogs)
 
     def test_a_piece_can_be_removed(self):

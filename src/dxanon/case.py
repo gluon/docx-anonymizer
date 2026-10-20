@@ -298,7 +298,19 @@ class Case:
             "schema": SCHEMA,
             "dossier": self.name,
             "pieces": [
-                {"label": p.label, "fichier": str(p.path) if p.path else None}
+                {
+                    "label": p.label,
+                    "fichier": str(p.path) if p.path else None,
+                    # What this piece consumed, and the name it went out
+                    # under. Without them a reloaded case cannot ask the
+                    # return trip the one question that matters, namely
+                    # whether a pseudonym this piece carried has been
+                    # reworded: it falls back to reporting, and a
+                    # half-restored document comes home as a warning
+                    # nobody has to act on.
+                    "appliques": sorted(p.used),
+                    "masque": str(p.masked) if p.masked else None,
+                }
                 for p in self.pieces
             ],
             "table": [
@@ -337,6 +349,8 @@ class Case:
             case.pieces.append(Piece(
                 label=record["label"], text="",
                 path=Path(record["fichier"]) if record.get("fichier") else None,
+                used=set(record.get("appliques", ())),
+                masked=Path(record["masque"]) if record.get("masque") else None,
             ))
         return case
 
