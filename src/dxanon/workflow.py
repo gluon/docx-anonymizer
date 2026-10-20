@@ -492,8 +492,12 @@ _ORG_BEFORE = re.compile(
     r"union|mutuelle|caisse|agence|service)\s+$",
     re.IGNORECASE,
 )
-_FEMININE_BEFORE = re.compile(r"\b(?:Madame|Mme|Mademoiselle|Mlle)\s+$")
-_MASCULINE_BEFORE = re.compile(r"\b(?:Monsieur|M\.|MM\.)\s+$")
+# Case-insensitive, like the two above. A page read from an image comes
+# back in whatever case the engine felt like, and "MADAME SOPHIE LENOIR"
+# matched nothing: the civility said nothing about the name after it, so
+# a woman was handed a company name.
+_FEMININE_BEFORE = re.compile(r"\b(?:Madame|Mme|Mademoiselle|Mlle)\s+$", re.IGNORECASE)
+_MASCULINE_BEFORE = re.compile(r"\b(?:Monsieur|M\.|MM\.)\s+$", re.IGNORECASE)
 
 
 def _kind_for_group(members: list[Row], text: str) -> str:

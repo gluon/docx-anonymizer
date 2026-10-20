@@ -304,6 +304,31 @@ executable handed to somebody would put this whole program under that
 licence, and this repository has no licence of its own yet. Taking that
 decision by accident, through a dependency, would be the wrong order.
 
+### Putting the spaces back
+
+The engine shipped with the executable is trained for Chinese and
+English, and on printed French it drops spaces where the letters are
+tight. Measured on a page of printed French, one line came back
+perfectly spaced and the next soldered: `SASTHERMOPACKINDUSTRIE`,
+`MADAMESOPHIE LENOIR`, `27BOULEVARDCHAVE,13005MARSEILLE`. Every rule
+here starts from words, so glued, a company name is one unknown token,
+an address is a street with no number and a postcode with no town, and a
+name inside a run is not there at all. A real run found six values where
+it should have found twelve.
+
+A model trained on French would have to be downloaded, which is the one
+thing this program cannot do. It does not need one: the words that make
+a rule fire are in closed lists already, so a glued run gives up a
+civility, a form of company, a street word or a number from either end,
+and nothing is ever cut out of a middle. That recovers what detection
+needs and leaves the rest alone, including a first name welded to a
+surname, which is masked as one token.
+
+Applied only to what a machine read, never to what somebody typed. The
+sample it was written against is the engine's real output, kept verbatim
+in `tests/test_ocr_qualite.py`, because a sample invented afterwards is a
+sample written to pass.
+
 ## What is not verified
 
 **The window.** `tests/test_gui_qt.py` builds it on Qt's offscreen

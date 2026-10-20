@@ -83,6 +83,80 @@ def _page_with_opencv(path: Path) -> Path:  # pragma: no cover - fallback
     return path
 
 
+#: What the engine really returned, on the page below, on 20 October
+#: 2026. Kept verbatim: it is the measurement the splitter was written
+#: against, and a sample invented afterwards would be a sample written
+#: to pass.
+AS_READ = """SASTHERMOPACKINDUSTRIE
+8 CHEMIN DE LA NERTHE, 13016 MARSEILLE
+MADAMESOPHIE LENOIR
+27BOULEVARDCHAVE,13005MARSEILLE
+MONSIEUR KARIMBENHADDOU, DIRECTEUR
+DES RESSOURCES HUMAINES"""
+
+
+class PuttingTheSpacesBack(unittest.TestCase):
+    """No engine needed: the splitter against what the engine gave."""
+
+    def setUp(self):
+        self.spaced = ocr.respace(AS_READ)
+
+    def test_a_form_of_company_is_taken_off_the_front(self):
+        self.assertIn("SAS THERMOPACK INDUSTRIE", self.spaced)
+
+    def test_a_civility_is_taken_off_the_front(self):
+        self.assertIn("MADAME SOPHIE LENOIR", self.spaced)
+
+    def test_a_number_is_split_from_the_word_after_it(self):
+        self.assertIn("27 BOULEVARD CHAVE", self.spaced)
+        self.assertIn("13005 MARSEILLE", self.spaced)
+
+    def test_a_line_that_was_already_right_is_left_alone(self):
+        self.assertIn("8 CHEMIN DE LA NERTHE, 13016 MARSEILLE", self.spaced)
+
+    def test_a_name_with_no_known_word_in_it_stays_in_one_piece(self):
+        """And is masked as one token, which is what matters.
+
+        Splitting "KARIMBENHADDOU" would need a dictionary of first
+        names, and a dictionary that splits names also splits words that
+        merely contain one.
+        """
+        self.assertIn("MONSIEUR KARIMBENHADDOU", self.spaced)
+
+    def test_nothing_is_cut_out_of_the_middle_of_a_word(self):
+        self.assertEqual(ocr.respace("MARSEILLE"), "MARSEILLE")
+        self.assertEqual(ocr.respace("Delacroix"), "Delacroix")
+        self.assertEqual(ocr.respace("CONCLUSIONS"), "CONCLUSIONS")
+
+    def test_what_was_typed_is_never_touched(self):
+        ordinary = "Madame Sophie LENOIR, 27 boulevard Chave, 13005 Marseille."
+        self.assertEqual(ocr.respace(ordinary), ordinary)
+
+    def test_the_grid_reads_the_repaired_page(self):
+        from dxanon import plaintext, workflow
+
+        grid = workflow.build(self.spaced)
+        values = {row.value for row in grid.rows}
+        self.assertIn("27 BOULEVARD CHAVE", values)
+        self.assertIn("THERMOPACK INDUSTRIE", values)
+        self.assertIn("SOPHIE LENOIR", values)
+
+        mapping = grid.to_mapping()
+        masked = plaintext.anonymize(self.spaced, mapping)
+        for real in ("LENOIR", "BENHADDOU", "THERMOPACK", "CHAVE", "NERTHE", "13005"):
+            self.assertNotIn(real, masked)
+        restored, missing = plaintext.deanonymize(masked, mapping)
+        self.assertEqual(restored, self.spaced)
+        self.assertEqual(missing, [])
+
+    def test_a_woman_is_not_given_a_company_name(self):
+        """In capitals, the civility matched nothing and she became one."""
+        from dxanon import workflow
+
+        rows = {row.value: row for row in workflow.build(self.spaced).rows}
+        self.assertNotEqual(rows["SOPHIE LENOIR"].kind, "org")
+
+
 @unittest.skipUnless(HAS_ENGINE, "no recognition engine in this build")
 class WhatTheEngineReads(unittest.TestCase):
     @classmethod
@@ -108,21 +182,21 @@ class WhatTheEngineReads(unittest.TestCase):
         self.assertIn("27 BOULEVARD CHAVE", upper, f"read back as:\n{self.text}")
         self.assertIn("13005 MARSEILLE", upper, f"read back as:\n{self.text}")
 
-    def test_what_the_engine_offers_to_change_this(self):
-        """Not an assertion: the knobs this build has, printed once.
+    def test_the_grid_finds_the_people_and_the_addresses(self):
+        """End to end, on a page nobody typed: what a reader has to check.
 
-        Fails on purpose so the message travels: the machine that writes
-        this code cannot install the engine, and a passing test says
-        nothing anywhere.
+        Four addresses, a company and a woman, from an image. The one
+        thing that stays glued is a first name against a surname with no
+        known word between them, and it is masked as one token, which is
+        what matters.
         """
-        import inspect
+        from dxanon import workflow
 
-        from rapidocr_onnxruntime import RapidOCR
-
-        signature = str(inspect.signature(RapidOCR.__init__))
-        engine = ocr._engine()
-        keys = sorted(k for k in vars(engine) if not k.startswith("__"))
-        self.fail(f"RapidOCR{signature}\nattributs: {keys}\nlu:\n{self.text}")
+        rows = {row.value.upper() for row in workflow.build(self.text).rows}
+        self.assertTrue(any("LENOIR" in value for value in rows), rows)
+        self.assertTrue(any("THERMOPACK" in value for value in rows), rows)
+        self.assertTrue(any("BENHADDOU" in value for value in rows), rows)
+        self.assertTrue(any(value.startswith("27 BOULEVARD") for value in rows), rows)
 
 
 if __name__ == "__main__":

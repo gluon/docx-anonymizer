@@ -33,8 +33,12 @@ with the network guard installed and fails if anything tried to leave.
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from . import detect
 
 #: Extensions handled here. PDFs are not: rendering a page needs another
 #: bundled dependency, and that is a separate decision with its own
@@ -67,6 +71,95 @@ class Reading:
         """
         weak = [text for text, score in self.lines if score < 0.80]
         return sorted(weak, key=lambda line: len(line), reverse=True)
+
+
+def _fold(value: str) -> str:
+    decomposed = unicodedata.normalize("NFD", value)
+    return "".join(ch for ch in decomposed if unicodedata.category(ch) != "Mn")
+
+
+#: Words the splitter is allowed to recognise inside a glued run.
+#: Deliberately not the whole legal vocabulary: this is only ever used to
+#: put back a space the engine dropped, and a long list means a word cut
+#: in two because something was hiding in the middle of it. These are
+#: the words that make a detection rule fire, which is the whole point
+#: of putting the space back: a civility makes what follows a name, a
+#: form of company makes it a company, a street word makes an address.
+GLUE_WORDS = tuple(sorted(
+    {
+        _fold(word).upper()
+        for word in (
+            detect.CIVILITIES
+            + detect.COMPANY_FORMS
+            + ("rue", "avenue", "boulevard", "impasse", "allee", "allée",
+               "chemin", "route", "place", "cours", "quai", "voie",
+               "residence", "résidence", "lotissement", "zone")
+            + ("industrie", "industries", "transports", "services",
+               "logistique", "distribution", "technologies", "solutions",
+               "partenaires", "international", "mutuelle", "cabinet",
+               "association", "federation", "fédération", "syndicat")
+        )
+        if len(_fold(word)) >= 3
+    },
+    key=len, reverse=True,
+))
+
+#: Below this, what is left of a run after a word is peeled off is more
+#: likely to be noise than a name.
+_MIN_REMAINDER = 2
+
+_DIGIT_BOUNDARY = re.compile(r"(?<=\d)(?=[^\W\d_])|(?<=[^\W\d_])(?=\d)")
+
+
+def respace(text: str) -> str:
+    """Put back the spaces the engine dropped, where they can be known.
+
+    Measured on a page of printed French, the engine returns one line
+    perfectly spaced and the next soldered together:
+    ``SASTHERMOPACKINDUSTRIE``, ``MADAMESOPHIE LENOIR``,
+    ``27BOULEVARDCHAVE,13005MARSEILLE``. The recognition model shipped
+    with the engine is trained for Chinese and English, and predicts a
+    space only where the gap is wide enough; a model trained on French
+    would have to be downloaded, which is the one thing this program
+    cannot do.
+
+    It does not need one. Every rule in this program starts from words,
+    and the words that matter are in closed lists already: a civility
+    makes what follows a name, a form of company makes it a company, a
+    street word makes an address, a run of digits against letters is a
+    number against a word. Splitting on those recovers exactly what
+    detection needs, and nothing else is touched.
+
+    Applied to what a machine read, never to what somebody typed.
+    """
+    return "\n".join(
+        " ".join(_split(token) for token in line.split())
+        for line in text.splitlines()
+    )
+
+
+def _split(token: str) -> str:
+    pieces = [piece for piece in _DIGIT_BOUNDARY.split(token) if piece]
+    return " ".join(part for piece in pieces for part in _peel(piece))
+
+
+def _peel(piece: str) -> list[str]:
+    """Take known words off both ends of a run, repeatedly.
+
+    Both ends and never the middle: ``THERMOPACKINDUSTRIE`` gives up
+    ``INDUSTRIE`` from the right and leaves a name, where a search
+    through the middle would cut a word that merely contains another.
+    """
+    folded = _fold(piece).upper()
+    for word in GLUE_WORDS:
+        if len(folded) <= len(word) + _MIN_REMAINDER:
+            continue
+        if folded.startswith(word):
+            return [piece[:len(word)]] + _peel(piece[len(word):])
+        if folded.endswith(word):
+            cut = len(piece) - len(word)
+            return _peel(piece[:cut]) + [piece[cut:]]
+    return [piece]
 
 
 class Unavailable(RuntimeError):
@@ -155,7 +248,7 @@ def read(source) -> Reading:
         # would otherwise surface as an exception on a user's scan.
         if len(item) < 3:
             continue
-        text, score = str(item[1]).strip(), _score(item[2])
+        text, score = respace(str(item[1]).strip()), _score(item[2])
         if text:
             lines.append((text, score))
 
