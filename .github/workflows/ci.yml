@@ -142,20 +142,27 @@ jobs:
         # pas lire les images".
         timeout-minutes: 3
         run: |
-          # --report, not a shell redirection: a --windowed build has no
-          # standard output to redirect, so the file came out empty and
-          # this check reported a bundle with no engine when the
+          # Through Start-Process, like the step above. This shell runs
+          # with $ErrorActionPreference = Stop, so a native command that
+          # exits non-zero ends the step then and there, before any line
+          # that would have said why: two runs reported nothing but
+          # "exit code 1".
+          #
+          # And --report, not a shell redirection: a --windowed build has
+          # no standard output to redirect, so the file came out empty
+          # and this check reported a bundle with no engine when the
           # question had never been asked.
-          dist\Anonymiseur.exe --self-check --report check.log
-          Get-Content check.log | ForEach-Object { Write-Host $_ }
+          $p = Start-Process -FilePath dist\Anonymiseur.exe `
+            -ArgumentList '--self-check','--report','check.log' -PassThru
+          if (-not $p.WaitForExit(120000)) { $p.Kill(); throw "the self-check did not finish" }
+          $written = Test-Path check.log
+          Write-Host "::warning::self-check exit=$($p.ExitCode) report=$written"
+          if ($written) {
+            Get-Content check.log | ForEach-Object { Write-Host "::warning::$_" }
+          }
+          if ($p.ExitCode -ne 0) { throw "the self-check failed with $($p.ExitCode)" }
+          if (-not $written) { throw "the self-check wrote no report" }
           if (-not (Select-String -Path check.log -Pattern "lecture d'images incluse" -Quiet)) {
-            # The reason travels as an annotation: a job's log needs a
-            # host some networks refuse, and "no engine" on its own does
-            # not say whether a package, a model file or a native
-            # library is missing.
-            Get-Content check.log `
-              | Select-Object -First 20 `
-              | ForEach-Object { Write-Host "::error::$_" }
             throw "the bundle has no recognition engine"
           }
 
