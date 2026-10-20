@@ -255,7 +255,13 @@ rest of the case file.
 platform and drives it with clicks: the five screens, the help from
 each, the refusals, the confirmations, the keyboard path. It has also
 been run by hand on macOS (Python 3.14, PySide6 6.12). It has not been
-run on Windows. A segfault on quit was reported once on macOS and could
+run on Windows.
+
+The release is built on Python 3.12, which is also the version both CI
+jobs run, so 3.12 is the supported runtime and the one the executable
+embeds. Development on 3.14 works and is what the macOS runs used; the
+code targets 3.11 and above. Nothing in it depends on a version-specific
+feature, and the suite passing on two versions is the only claim made. A segfault on quit was reported once on macOS and could
 not be reproduced; the lazy type creation seen in its trace now happens
 at import instead of at closing time, which is checked at startup, but
 the crash itself is not proven gone.
@@ -268,10 +274,19 @@ properties; the return trip gave back the original. That is one
 document on one version of Word. A name whose formatting changes in the
 middle (half bold) comes back in the formatting of its first part.
 
-**The Windows executable.** It has never been built or run. The build job
-exists and the bundle is checked by running `--self-check` against it,
-but that job is gated on a tag or a manual run, so until one happens
-nothing here proves the executable works.
+**The Windows executable.** It is built, it starts, and `--self-check`
+returns 0 on a clean Windows runner with no Python installed, in three
+seconds. That proves the bundle is complete, which is where one-file
+builds fail. It does not prove the window behaves: nobody has opened it
+on Windows yet.
+
+**The colours of the main button.** Fixed in the window's own stylesheet
+rather than left to the platform, after macOS drew the default button
+light grey on white, where it read as disabled. `tests/test_contraste.py`
+computes the WCAG contrast of every painted state from the stylesheet
+that ships, so legibility is a number rather than an opinion. What no
+test here can say is whether Windows draws the rest of the window around
+it the way macOS does.
 
 **The signed build.** The executable is unsigned, so Windows will warn on
 first launch. That needs a code-signing certificate, not a code change.

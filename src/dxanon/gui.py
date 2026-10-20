@@ -39,6 +39,45 @@ from .workflow import Decision
 #: Index of the help page in the stack, so the other screens stay 0..3.
 HELP = 4
 
+#: The one action of each screen, painted rather than left to the theme.
+#:
+#: Qt asks the platform to draw a default button, and macOS drew this one
+#: light grey on white: the button that carries the whole screen read as
+#: disabled. Which button a theme highlights, and how, is not something
+#: this program can test for, so it stops asking: the colours are fixed
+#: here, and their contrast is checked by a test rather than by looking.
+#:
+#: The disabled state is spelled out too. Without it, Qt keeps the
+#: stylesheet's background and only greys the label, so a button that
+#: cannot be clicked still looks like the one that can.
+PRIMARY_BACKGROUND = "#1f4f8b"
+PRIMARY_TEXT = "#ffffff"
+PRIMARY_STYLE = f"""
+QPushButton {{
+  background-color: {PRIMARY_BACKGROUND};
+  color: {PRIMARY_TEXT};
+  border: 1px solid #16375f;
+  border-radius: 6px;
+  padding: 8px 16px;
+  font-weight: 600;
+}}
+QPushButton:hover    {{ background-color: #1a4478; }}
+QPushButton:pressed  {{ background-color: #143a66; }}
+QPushButton:disabled {{
+  background-color: #e4e6e9;
+  color: #5c6166;
+  border: 1px solid #c9ccd1;
+}}
+"""
+
+
+def primary(button: QPushButton) -> QPushButton:
+    """Mark a button as the action of its screen."""
+    button.setStyleSheet(PRIMARY_STYLE)
+    button.setDefault(True)
+    button.setMinimumHeight(40)
+    return button
+
 HELP_TEXT = """
 <style>
   h2 { margin-bottom: 2px; }
@@ -270,8 +309,7 @@ class Window(QMainWindow):
         self.paste_area.setVisible(False)
         layout.addWidget(self.paste_area, stretch=1)
 
-        self.analyse_button = QPushButton("Analyser")
-        self.analyse_button.setDefault(True)
+        self.analyse_button = primary(QPushButton("Analyser"))
         self.analyse_button.setVisible(False)
         self.analyse_button.clicked.connect(self._analyse_text)
         layout.addWidget(self.analyse_button)
@@ -413,10 +451,8 @@ class Window(QMainWindow):
         row = QHBoxLayout()
         back = QPushButton("Retour")
         back.clicked.connect(lambda: self.stack.setCurrentIndex(0))
-        run = QPushButton("Produire la version anonyme")
-        run.setMinimumHeight(40)
+        run = primary(QPushButton("Produire la version anonyme"))
         run.clicked.connect(self._run)
-        run.setDefault(True)
         row.addWidget(back)
         row.addStretch()
         row.addWidget(run)
@@ -501,10 +537,9 @@ class Window(QMainWindow):
         # Not connect(self._reset): clicked passes checked=False, which
         # landed in ``confirm`` and cleared the cycle without asking.
         restart.clicked.connect(lambda: self._reset())
-        self.done_button = done = QPushButton("J'ai la réponse de l'IA, remettre les vrais noms")
-        done.setMinimumHeight(40)
+        self.done_button = done = primary(
+            QPushButton("J'ai la réponse de l'IA, remettre les vrais noms"))
         done.clicked.connect(self._open_return)
-        done.setDefault(True)
         row.addWidget(copy)
         row.addWidget(restart)
         row.addStretch()
@@ -612,10 +647,8 @@ class Window(QMainWindow):
         back.clicked.connect(lambda: self.stack.setCurrentIndex(self._return_from))
         open_file = QPushButton("Ouvrir un document corrigé")
         open_file.clicked.connect(self._restore_file)
-        restore = QPushButton("Remettre les vrais noms")
-        restore.setMinimumHeight(40)
+        restore = primary(QPushButton("Remettre les vrais noms"))
         restore.clicked.connect(self._restore_text)
-        restore.setDefault(True)
         row.addWidget(back)
         row.addWidget(open_file)
         row.addStretch()
