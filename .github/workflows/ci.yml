@@ -142,7 +142,11 @@ jobs:
         # pas lire les images".
         timeout-minutes: 3
         run: |
-          dist\Anonymiseur.exe --self-check > check.log 2>&1
+          # --report, not a shell redirection: a --windowed build has no
+          # standard output to redirect, so the file came out empty and
+          # this check reported a bundle with no engine when the
+          # question had never been asked.
+          dist\Anonymiseur.exe --self-check --report check.log
           Get-Content check.log | ForEach-Object { Write-Host $_ }
           if (-not (Select-String -Path check.log -Pattern "lecture d'images incluse" -Quiet)) {
             # The reason travels as an annotation: a job's log needs a

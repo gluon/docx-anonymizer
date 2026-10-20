@@ -12,6 +12,15 @@ from __future__ import annotations
 import sys
 
 
+#: Where to write the report, when asked. A ``--windowed`` build has no
+#: standard output at all: not a closed one, not a redirected one, None.
+#: Redirecting it to a file in the shell gives an empty file, and a
+#: check that read that file concluded the bundle had no recognition
+#: engine when the question had simply never been asked. The report goes
+#: where the caller says, through an ordinary file.
+_report: object | None = None
+
+
 def say(message: str, error: bool = False) -> None:
     """Print without assuming there is anywhere to print to.
 
@@ -24,6 +33,9 @@ def say(message: str, error: bool = False) -> None:
     stream = sys.stderr if error else sys.stdout
     if stream is not None:
         print(message, file=stream)
+    if _report is not None:
+        _report.write(message + "\n")
+        _report.flush()
 
 
 def self_check() -> int:
@@ -64,9 +76,27 @@ def self_check() -> int:
     return 0
 
 
-def main() -> int:
-    if "--self-check" in sys.argv:
-        return self_check()
+def _report_path(argv: list[str]) -> str | None:
+    """``--report <file>``, or None."""
+    if "--report" not in argv:
+        return None
+    index = argv.index("--report")
+    return argv[index + 1] if index + 1 < len(argv) else None
+
+
+def main(argv: list[str] | None = None) -> int:
+    global _report
+    argv = list(sys.argv if argv is None else argv)
+    if "--self-check" in argv:
+        path = _report_path(argv)
+        if path is None:
+            return self_check()
+        with open(path, "w", encoding="utf-8") as handle:
+            _report = handle
+            try:
+                return self_check()
+            finally:
+                _report = None
     from .gui import main as gui_main
 
     return gui_main()
