@@ -42,6 +42,11 @@ class Row:
     kind: str = "candidate"
     pseudonym: str = ""
     group: str = ""
+    #: Which pieces of a case the value appears in. Empty for a single
+    #: document, where the question does not arise. It is shown rather
+    #: than used: a name that turns up in one piece out of nine is worth
+    #: a second look, and a name in all nine rarely is.
+    pieces: tuple[str, ...] = ()
 
     @property
     def is_person_like(self) -> bool:
@@ -105,6 +110,64 @@ def build(
     rows.extend(_declared_but_unseen(rows, known or []))
     _assign(rows, text)
     return Grid(rows=rows, images=list(images or []))
+
+
+def build_many(sources: list[tuple[str, str, list[str]]]) -> Grid:
+    """One grid, and one pseudonym per subject, across several documents.
+
+    A case is not a pile of independent documents. Masking each one on
+    its own gives the client a different name in the conclusions and in
+    the mail thread, and an AI asked to follow an argument across both
+    reads two people. So detection runs per document, where it has to:
+    positions, citation zones and declared identities are local. Only the
+    rows are then merged, and the pseudonyms are drawn once, against the
+    text of every document at once, so an invented name cannot collide
+    with a word sitting in a piece nobody looked at.
+
+    ``sources`` is (label, text, declared identities) per document.
+    """
+    merged: dict[str, Row] = {}
+    for label, text, known in sources:
+        for value, certainty, why, count, kind in detect.group(detect.find(text, known=known)):
+            _merge_row(merged, label, Row(
+                value=value, certainty=certainty, why=why, occurrences=count,
+                decision=DEFAULTS[certainty], kind=kind, pieces=(label,),
+            ))
+        for row in _declared_but_unseen(list(merged.values()), known):
+            _merge_row(merged, label, row)
+
+    rows = list(merged.values())
+    for row in rows:
+        row.decision = DEFAULTS[row.certainty]
+    _assign(rows, "\n".join(text for _, text, _ in sources))
+    return Grid(rows=rows)
+
+
+def _merge_row(merged: dict[str, Row], label: str, row: Row) -> None:
+    """Fold one document's row into the case's row for the same value.
+
+    Certainty is merged the way it is merged within one document, and for
+    the same reason: arithmetic wins, and "party to a cited judgment"
+    survives only if every appearance of the value, in every piece, sits
+    inside a citation. A name that is a cited party in one document and
+    the client in another is the client.
+    """
+    existing = merged.get(row.value)
+    if existing is None:
+        merged[row.value] = row
+        if label not in row.pieces:
+            row.pieces = row.pieces + (label,)
+        return
+
+    existing.occurrences += row.occurrences
+    if label not in existing.pieces:
+        existing.pieces = existing.pieces + (label,)
+    if row.certainty is Certainty.CERTAIN:
+        existing.certainty, existing.why = row.certainty, row.why
+    elif existing.certainty is Certainty.CASE_LAW and row.certainty is not Certainty.CASE_LAW:
+        existing.certainty, existing.why = row.certainty, row.why
+    if existing.kind == "candidate" and row.kind != "candidate":
+        existing.kind = row.kind
 
 
 def _declared_but_unseen(rows: list[Row], known: list[str]) -> list[Row]:
@@ -321,7 +384,13 @@ def _tokens(value: str) -> frozenset[str]:
 import re  # noqa: E402  (kept beside the context helpers it serves)
 
 _PLACE_BEFORE = re.compile(
-    r"(?:\b\d{5}\s+|\bà\s+|\bau\s+|\bBarreau\s+(?:de|d['’])\s*|\bCA\s+|\bTribunal[^.\n]{0,30}\s+de\s+)$",
+    r"(?:\b\d{5}\s+|\bà\s+|\bau\s+|\bBarreau\s+(?:de|d['’])\s*|\bCA\s+"
+    # A court is named after its town, and the formulas that name one are
+    # fixed: "CONSEIL DE PRUD'HOMMES DE MARSEILLE" gave the town a first
+    # name, and the masked pleading was addressed to "PRUD'HOMMES DE
+    # DAMIEN".
+    r"|\b(?:prud['’]hommes|pr[uû]d|cour\s+d['’]appel|tribunal[^.\n]{0,30}|"
+    r"conseil[^.\n]{0,30}|commune|ville|mairie|barreau)\s+(?:de\s+|du\s+|d['’]))$",
     re.IGNORECASE,
 )
 _ORG_BEFORE = re.compile(
