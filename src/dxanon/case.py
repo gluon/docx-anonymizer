@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import engine, plaintext, source, workflow
-from .engine import RefusedExport, _occurs
+from .engine import RefusedExport, _occurs, refuse_empty
 from .mapping import Entry, Mapping
 from .workflow import Grid
 
@@ -185,7 +185,12 @@ class Case:
         ready and one needs a look. The refusal travels in its outcome.
         """
         table = self.mapping()
-        self.table = table
+        # Raised before anything else, and not caught below: an empty
+        # table is not a refusal, it is a question nobody answered, and
+        # it has its own words on screen. EmptyTable is a RefusedExport,
+        # so the per-piece handler swallowed it and the window said
+        # "export refused" where it used to say "nothing is ticked".
+        refuse_empty(table)
         folder = Path(folder) if folder is not None else None
         if folder is not None:
             # Asked for a folder that does not exist yet: the masking is
@@ -212,6 +217,15 @@ class Case:
             except RefusedExport as refused:
                 outcome.refused = sorted({r.value for r in refused.residues})
             outcomes.append(outcome)
+
+        # The table is the case's only once something has gone out under
+        # it. Kept after an export where every piece was refused, it made
+        # the window hold a cycle that produced nothing: closing would
+        # have asked what to do about names no document carries. Kept
+        # when one piece out of nine succeeded, though, because that one
+        # is out there and has to be able to come home.
+        if any(outcome.ok for outcome in outcomes):
+            self.table = table
         return outcomes
 
     def restore_file(self, path, destination=None, label: str | None = None,

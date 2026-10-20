@@ -245,6 +245,33 @@ class Files(unittest.TestCase):
         self.assertTrue(outcome.ok, outcome.refused)
         self.assertEqual(text_of(self.source), text_of(outcome.written))
 
+    def test_an_empty_table_is_its_own_answer(self):
+        """Not a refusal: a question nobody answered, with its own words."""
+        from dxanon.engine import EmptyTable
+        from dxanon.workflow import Decision as D
+
+        case = Case(name="Rien")
+        case.add_text("note", "Jean Dupont conteste.")
+        for row in case.analyse().rows:
+            row.decision = D.KEEP
+        with self.assertRaises(EmptyTable):
+            case.export()
+
+    def test_a_table_nothing_went_out_under_is_not_kept(self):
+        """Otherwise the window holds a cycle that produced nothing.
+
+        Closing it would then ask what to do about names no document
+        carries, and the next analysis would be told to reuse pseudonyms
+        that were never sent anywhere.
+        """
+        case = Case(name="Refus")
+        case.add_file(fixtures.build_with_residue(self.dir / "tout-refuse.docx"))
+        case.analyse()
+        case.grid.rows.append(_declared("Sylvie Marchand"))
+        outcomes = case.export(folder=self.dir / "sortie")
+        self.assertFalse(any(o.ok for o in outcomes), [o.refused for o in outcomes])
+        self.assertIsNone(case.table)
+
     def test_a_refused_piece_does_not_stop_the_others(self):
         case = Case(name="Mixte")
         case.add_text("propre", "Jean Dupont conteste.")
