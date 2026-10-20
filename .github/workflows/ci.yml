@@ -24,8 +24,17 @@ jobs:
         # Bounded: a test that waits on something nobody answers used to
         # hold the job until its own six-hour limit, and the log of a
         # step that never ends cannot be read.
+        #
+        # Failures are repeated as annotations, which the API serves.
+        # Downloading a job's log needs a host some networks refuse, and
+        # a red cross with no readable reason is worth very little.
         timeout-minutes: 10
-        run: python -m unittest discover -s tests -v
+        run: |
+          set -o pipefail
+          python -m unittest discover -s tests -v 2>&1 | tee /tmp/tests.log && exit 0
+          grep -E "^(FAIL|ERROR):|AssertionError|modal box" /tmp/tests.log \
+            | head -20 | while IFS= read -r line; do echo "::error::$line"; done
+          exit 1
         env:
           PYTHONPATH: src:tests
 
@@ -44,8 +53,21 @@ jobs:
         # The Qt tests run here and nowhere else, so this is where a
         # window waiting on a modal box hangs. Ten minutes against a
         # suite that takes two.
+        #
+        # Failures are repeated as annotations: see the same step on the
+        # other job.
         timeout-minutes: 10
-        run: python -m unittest discover -s tests -v
+        run: |
+          $output = python -m unittest discover -s tests -v 2>&1
+          $failed = $LASTEXITCODE -ne 0
+          $output | ForEach-Object { Write-Host $_ }
+          if ($failed) {
+            $output `
+              | Select-String -Pattern '^(FAIL|ERROR):|AssertionError|modal box' `
+              | Select-Object -First 20 `
+              | ForEach-Object { Write-Host "::error::$($_.Line)" }
+            throw "tests failed"
+          }
         env:
           PYTHONPATH: src;tests
       - name: Import the window against a real PySide6
