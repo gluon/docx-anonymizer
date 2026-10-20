@@ -21,6 +21,10 @@ jobs:
           python-version: "3.12"
       - run: pip install -e .
       - name: Tests
+        # Bounded: a test that waits on something nobody answers used to
+        # hold the job until its own six-hour limit, and the log of a
+        # step that never ends cannot be read.
+        timeout-minutes: 10
         run: python -m unittest discover -s tests -v
         env:
           PYTHONPATH: src:tests
@@ -37,6 +41,10 @@ jobs:
           python-version: "3.12"
       - run: pip install -e . PySide6
       - name: Tests
+        # The Qt tests run here and nowhere else, so this is where a
+        # window waiting on a modal box hangs. Ten minutes against a
+        # suite that takes two.
+        timeout-minutes: 10
         run: python -m unittest discover -s tests -v
         env:
           PYTHONPATH: src;tests

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 import unittest
 from pathlib import Path
 
@@ -66,9 +67,36 @@ class WindowTests(unittest.TestCase):
         self.window.activateWindow()
         QTest.qWaitForWindowActive(self.window)
         self.seen_dialogs: list[str] = []
+        self.stray_dialogs: list[str] = []
         self.alive = True
+        self._stray_since: float | None = None
+        # A modal box nobody answers blocks the thread inside exec() for
+        # good: a test that opens one it did not expect does not fail, it
+        # hangs, and it hung the Windows job for twenty-five minutes
+        # until the step was bounded. This closes any box left standing
+        # and records it, so the test fails by name instead.
+        self._watchdog = QTimer(self.window)
+        self._watchdog.setInterval(300)
+        self._watchdog.timeout.connect(self._close_stray)
+        self._watchdog.start()
+
+    def _close_stray(self) -> None:
+        box = QApplication.activeModalWidget()
+        if not isinstance(box, QMessageBox) or not box.buttons():
+            self._stray_since = None
+            return
+        now = time.monotonic()
+        if self._stray_since is None:
+            self._stray_since = now
+            return
+        # A box a test means to answer is answered in milliseconds.
+        if now - self._stray_since > 2.0:
+            self.stray_dialogs.append(box.text())
+            box.buttons()[0].click()
+            self._stray_since = None
 
     def tearDown(self):
+        self._watchdog.stop()
         self.alive = False  # a handler still waiting must not answer the next test
         # Let it close without asking. The window asks when names are
         # held and nothing is saved, and it reads that from the case, so
@@ -78,6 +106,10 @@ class WindowTests(unittest.TestCase):
         self.window.case = self.gui.Case()
         self.window.close()
         self.window.deleteLater()
+        self.assertEqual(
+            self.stray_dialogs, [],
+            "a modal box was left standing: the test would have hung",
+        )
 
     # ------------------------------------------------------------ helpers
     def button(self, text: str) -> QPushButton:
