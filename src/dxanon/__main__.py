@@ -57,9 +57,10 @@ def self_check() -> int:
     # on the machine of someone who was told it could.
     from . import ocr
 
+    trouble = ocr.diagnosis()
     say(f"OK : {len(grid.rows)} élément(s) détecté(s), aller-retour exact, "
         f"garde-fou réseau actif, {len(missing)} pseudonyme(s) non restitué(s), "
-        f"lecture d'images {'incluse' if ocr.available() else 'absente'}")
+        f"lecture d'images {'incluse' if not trouble else 'absente : ' + trouble}")
     return 0
 
 

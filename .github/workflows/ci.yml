@@ -145,7 +145,13 @@ jobs:
           dist\Anonymiseur.exe --self-check > check.log 2>&1
           Get-Content check.log | ForEach-Object { Write-Host $_ }
           if (-not (Select-String -Path check.log -Pattern "lecture d'images incluse" -Quiet)) {
-            Write-Host "::error::the bundle has no recognition engine"
+            # The reason travels as an annotation: a job's log needs a
+            # host some networks refuse, and "no engine" on its own does
+            # not say whether a package, a model file or a native
+            # library is missing.
+            Get-Content check.log `
+              | Select-Object -First 20 `
+              | ForEach-Object { Write-Host "::error::$_" }
             throw "the bundle has no recognition engine"
           }
 

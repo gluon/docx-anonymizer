@@ -80,11 +80,23 @@ def available() -> bool:
     and says so when a scan is offered, rather than failing on an
     import three screens later.
     """
+    return not diagnosis()
+
+
+def diagnosis() -> str:
+    """Empty when a scan can be read, and why not when it cannot.
+
+    Worth a function of its own because the answer arrives from a
+    machine nobody is sitting at. The first bundle built with the engine
+    did not have it, and "absent" was all there was to go on: a missing
+    package, a model file left out of the one-file archive and a native
+    library that will not load all read the same from outside.
+    """
     try:
         _engine()
-    except Unavailable:
-        return False
-    return True
+    except Unavailable as error:
+        return str(error)
+    return ""
 
 
 _cached = None
@@ -103,11 +115,15 @@ def _engine():
     try:
         from rapidocr_onnxruntime import RapidOCR
     except ImportError as error:  # pragma: no cover - depends on the build
-        raise Unavailable(
-            "cette version ne sait pas lire les images : "
-            "la reconnaissance de texte n'y est pas incluse"
-        ) from error
-    _cached = RapidOCR()
+        raise Unavailable(f"paquet absent du build : {error}") from error
+    try:
+        _cached = RapidOCR()
+    except Exception as error:  # noqa: BLE001 - any failure here means the same
+        # Present and unusable: a model file the one-file archive left
+        # behind, or a native library that will not load. Said as it is,
+        # because the two are fixed differently and from outside they
+        # look identical.
+        raise Unavailable(f"moteur présent mais refuse de démarrer : {error}") from error
     return _cached
 
 
