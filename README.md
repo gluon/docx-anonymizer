@@ -277,6 +277,33 @@ whether the bundle has it: a one-file build that silently drops a package
 is exactly the failure that check exists to catch. The executable is
 55 MB without it and 149 MB with it.
 
+## Reading a PDF
+
+A PDF is two documents wearing one extension. A letter exported from a
+word processor has its characters in the file and can be read exactly; a
+photograph of paper has no characters at all. Same icon, opposite
+consequences: the first is as reliable as a .docx, the second carries
+every risk of a scan.
+
+So a PDF is read page by page and says which it was. A page with text is
+extracted, a page without is rendered into memory and recognised, and a
+document where any page had to be rendered counts as scanned, which is
+what makes its piece wait for somebody to read it. Rendered into memory
+and not through a temporary file: that file would be a page of the
+client's document, in clear, in a folder nobody cleans.
+
+What extraction changes is the piece. PDFium returns the typographic
+apostrophe where the file was written with the ASCII one, and the piece
+of the case is the extracted text: the round trip is exact against that
+text, and the PDF itself is never rewritten. Pinned by a test, because it
+looks like a defect and is not one.
+
+The library is `pypdfium2`, which wraps Google's PDFium under Apache 2.0
+and BSD. The obvious one is PyMuPDF, and it is AGPL: bundling it in an
+executable handed to somebody would put this whole program under that
+licence, and this repository has no licence of its own yet. Taking that
+decision by accident, through a dependency, would be the wrong order.
+
 ## What is not verified
 
 **The window.** `tests/test_gui_qt.py` builds it on Qt's offscreen

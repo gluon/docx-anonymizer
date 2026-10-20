@@ -20,6 +20,14 @@ dependencies = ["lxml>=5.0"]
 # the marker, installing on 3.14 succeeds without the engine and the
 # window says it cannot read images, which is a working program.
 ocr = ['rapidocr-onnxruntime>=1.3,<2; python_version < "3.13"']
+# Reading a PDF. pypdfium2 wraps Google's PDFium under Apache 2.0 and
+# BSD, and does both halves of the job: the text of a page that has
+# text, and the image of one that has not. The obvious library for
+# this is PyMuPDF, which is AGPL: bundling it in an executable handed
+# to somebody would put this whole program under that licence, and
+# this repository has no licence of its own yet. Taking that decision
+# by accident, through a dependency, would be the wrong order.
+pdf = ["pypdfium2>=4.25"]
 
 [project.scripts]
 dxanon = "dxanon.cli:main"

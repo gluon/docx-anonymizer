@@ -25,7 +25,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import engine, ocr, plaintext, source, workflow
+from . import engine, ocr, pdf, plaintext, source, workflow
 from .engine import RefusedExport, _occurs, refuse_empty
 from .mapping import Entry, Mapping
 from .workflow import Grid
@@ -82,6 +82,25 @@ class Piece:
         if self.scanned and not self.reviewed:
             return "texte issu d'une image, pas encore relu"
         return ""
+
+    @property
+    def reading_note(self) -> str:
+        """What reading this piece turned out to need, and what follows.
+
+        A PDF is two kinds of document wearing one icon, and the same
+        file name can mean an extraction as exact as a .docx or a
+        machine's guess at a photograph of paper. Which it was decides
+        whether anyone has to proof-read it, so it is said once, when
+        the piece is added, rather than discovered at the export.
+        """
+        read = f"{len(self.text.split())} mot(s) lus dans « {self.label} »."
+        if not self.scanned:
+            return (f"{read}\n\nLes pages portaient leur texte : la lecture est "
+                    "exacte, comme pour un document Word.")
+        return (f"{read}\n\nAu moins une page était une image, et son texte a "
+                "été reconnu par une machine : un nom mal lu ne serait pas "
+                "repéré. Vous devrez relire cette pièce avant de produire la "
+                "version anonyme.")
 
     @property
     def nature(self) -> str:
@@ -175,6 +194,31 @@ class Case:
             )
         piece = Piece(
             label=path.name, text=reading.text, scanned=True,
+            doubtful=reading.doubtful,
+        )
+        self.pieces.append(piece)
+        return piece
+
+    def add_pdf(self, path) -> Piece:
+        """Add a PDF, reading its text where it has text.
+
+        A PDF is two documents wearing one extension, and which one it
+        is decides whether the piece has to be proof-read: a letter
+        exported from a word processor is as exact as a .docx, a
+        photograph of paper carries every risk of a scan. The piece
+        comes back marked by what was actually needed to read it.
+        """
+        path = Path(path)
+        if any(p.label == path.name for p in self.pieces):
+            raise ValueError(f"« {path.name} » est déjà une pièce de ce dossier.")
+        reading = pdf.read(path)
+        if not reading.text.strip():
+            raise ValueError(
+                f"rien n'a pu être lu dans « {path.name} ». Un PDF de pages "
+                "scannées trop pâles, ou d'images sans texte, se lit mal."
+            )
+        piece = Piece(
+            label=path.name, text=reading.text, scanned=reading.scanned,
             doubtful=reading.doubtful,
         )
         self.pieces.append(piece)

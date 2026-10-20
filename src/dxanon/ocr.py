@@ -127,18 +127,24 @@ def _engine():
     return _cached
 
 
-def read(path) -> Reading:
-    """Read one image. Returns what was found, never raises on a bad scan.
+def read(source) -> Reading:
+    """Read one image, from a file or from memory.
 
     An unreadable scan is an ordinary outcome, not an error: a blank
     page, a photograph of a desk, a page of handwriting. It comes back
     empty and the window says so.
-    """
-    path = Path(path)
-    if path.suffix.lower() not in IMAGES:
-        raise ValueError(f"« {path.suffix} » n'est pas une image que je sais lire")
 
-    result, _ = _engine()(str(path))
+    An array rather than a path is how a PDF page arrives: rendering it
+    to a temporary file first would put a page of the client's document,
+    in clear, in a folder nobody cleans.
+    """
+    if isinstance(source, (str, Path)):
+        path = Path(source)
+        if path.suffix.lower() not in IMAGES:
+            raise ValueError(f"« {path.suffix} » n'est pas une image que je sais lire")
+        source = str(path)
+
+    result, _ = _engine()(source)
     if not result:
         return Reading()
 

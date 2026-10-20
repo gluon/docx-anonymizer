@@ -19,7 +19,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e .[ocr]
+      - run: pip install -e '.[ocr,pdf]'
       - name: Tests
         # Bounded: a test that waits on something nobody answers used to
         # hold the job until its own six-hour limit, and the log of a
@@ -48,7 +48,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e .[ocr] PySide6
+      - run: pip install -e '.[ocr,pdf]' PySide6
       - name: Tests
         # The Qt tests run here and nowhere else, so this is where a
         # window waiting on a modal box hangs. Ten minutes against a
@@ -103,7 +103,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e .[ocr] PySide6 pyinstaller
+      - run: pip install -e '.[ocr,pdf]' PySide6 pyinstaller
       - name: Build the executable
         run: >
           pyinstaller --noconfirm --onefile --windowed
@@ -113,6 +113,7 @@ jobs:
           --hidden-import lxml._elementpath
           --collect-all rapidocr_onnxruntime
           --collect-all onnxruntime
+          --collect-all pypdfium2
           anonymiseur.py
 
       - name: Check the executable starts
@@ -164,6 +165,9 @@ jobs:
           if (-not $written) { throw "the self-check wrote no report" }
           if (-not (Select-String -Path check.log -Pattern "lecture d'images incluse" -Quiet)) {
             throw "the bundle has no recognition engine"
+          }
+          if (-not (Select-String -Path check.log -Pattern 'lecture de PDF incluse' -Quiet)) {
+            throw "the bundle cannot read a PDF"
           }
 
       - name: A name an artifact is allowed to have
