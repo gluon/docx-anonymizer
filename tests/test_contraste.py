@@ -103,9 +103,15 @@ class ThePrimaryButton(unittest.TestCase):
         self.assertGreaterEqual(contrast(disabled, constant("PRIMARY_BACKGROUND")), 3.0)
 
     def test_the_colours_are_not_left_to_the_platform(self):
+        """Every button marked as a default goes through primary().
+
+        Counting the calls went stale the moment a screen was added.
+        What matters is that none is left asking the theme to decide,
+        which is what setDefault alone does.
+        """
         self.assertIn("setStyleSheet(PRIMARY_STYLE)", GUI)
-        self.assertEqual(GUI.count("primary(QPushButton("), 3)
-        self.assertIn("primary(\n", GUI)
+        self.assertEqual(GUI.count("setDefault(True)"), 1, "a default button bypasses primary()")
+        self.assertGreaterEqual(GUI.count("primary(QPushButton("), 3)
 
 
 if __name__ == "__main__":

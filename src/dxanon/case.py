@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import engine, plaintext, source, workflow
-from .engine import RefusedExport
+from .engine import RefusedExport, _occurs
 from .mapping import Entry, Mapping
 from .workflow import Grid
 
@@ -82,6 +82,15 @@ class Outcome:
     def ok(self) -> bool:
         return not self.refused
 
+    @property
+    def description(self) -> str:
+        """One line about this piece, for a list of them."""
+        if not self.ok:
+            return "Refusée : " + ", ".join(self.refused[:4])
+        if self.written is not None:
+            return str(self.written)
+        return f"{len((self.text or '').split())} mot(s) à copier"
+
 
 class Case:
     """The pieces, the grid they produced, and the table it comes from."""
@@ -98,7 +107,15 @@ class Case:
     # -- building ---------------------------------------------------------
 
     def add_file(self, path) -> Piece:
+        """Add a document. Refuses one that is already a piece.
+
+        The same document twice would be masked twice, written twice and
+        counted twice in every row's occurrences, and the window would
+        show two lines for one file.
+        """
         path = Path(path)
+        if any(p.path == path for p in self.pieces):
+            raise ValueError(f"« {path.name} » est déjà une pièce de ce dossier.")
         text, images, identities = source.read_document(path)
         piece = Piece(label=path.name, text=text, path=path,
                       identities=identities, images=images)
@@ -131,6 +148,24 @@ class Case:
         self.grid = grid
         return grid
 
+    @property
+    def names(self) -> int:
+        """How many real names are held right now, saved or not.
+
+        Asked by every screen that has to say what closing the window
+        would cost, and by the one that asks before dropping it.
+        """
+        return len(self.table.entries) if self.table else 0
+
+    def summary(self) -> str:
+        """What is held, in words, for a window to show as it is."""
+        if not self.names:
+            return ""
+        held = f"{self.names} noms"
+        if len(self.pieces) > 1:
+            held = f"{len(self.pieces)} pièce(s), {held}"
+        return f"Cycle en cours, {held}."
+
     def mapping(self) -> Mapping:
         if self.grid is None:
             raise ValueError("analyse the case before asking for its table")
@@ -141,7 +176,7 @@ class Case:
 
     # -- exporting --------------------------------------------------------
 
-    def export(self, folder=None) -> list[Outcome]:
+    def export(self, folder=None, overwrite: bool = False) -> list[Outcome]:
         """Mask every piece with the one table.
 
         A piece that is refused does not stop the others. Nothing was
@@ -165,6 +200,8 @@ class Case:
             try:
                 if piece.is_file:
                     destination = (folder or piece.path.parent) / _masked_name(piece.path, table)
+                    if not overwrite:
+                        destination = unused(destination)
                     report = engine.anonymize(piece.path, destination, table)
                     piece.used, piece.masked = set(report.used), destination
                     outcome.written, outcome.used = destination, piece.used
@@ -177,9 +214,11 @@ class Case:
             outcomes.append(outcome)
         return outcomes
 
-    def restore_file(self, path, destination=None, label: str | None = None) -> Outcome:
+    def restore_file(self, path, destination=None, label: str | None = None,
+                     allow_partial: bool = False) -> Outcome:
         path = Path(path)
         table, strict = self._table_for(label, path)
+        strict = strict and not allow_partial
         destination = Path(destination) if destination is not None else (
             path.with_name(f"{path.stem.replace('_ANON', '')}_FINAL{path.suffix}")
         )
@@ -191,8 +230,10 @@ class Case:
             outcome.refused = sorted({r.value for r in refused.residues})
         return outcome
 
-    def restore_text(self, text: str, label: str | None = None) -> Outcome:
+    def restore_text(self, text: str, label: str | None = None,
+                     allow_partial: bool = False) -> Outcome:
         table, strict = self._table_for(label, None)
+        strict = strict and not allow_partial
         outcome = Outcome(label=label or "texte")
         try:
             restored, missing = plaintext.deanonymize(text, table, require_all=strict)
@@ -316,6 +357,21 @@ class Case:
         return missing
 
 
+def unused(path: Path) -> Path:
+    """A free name beside ``path``, so nothing is ever overwritten.
+
+    Masking the same document twice in one session is ordinary: a value
+    was unchecked and the export run again. Overwriting the first output
+    would be fine; overwriting a *restored* document with a masked one,
+    because both derive the same stem, would not.
+    """
+    candidate, number = path, 2
+    while candidate.exists():
+        candidate = path.with_name(f"{path.stem}_{number}{path.suffix}")
+        number += 1
+    return candidate
+
+
 def _reuse(grid: Grid, table: Mapping) -> None:
     """Give back to each row the pseudonym the table already holds."""
     for row in grid.rows:
@@ -336,4 +392,9 @@ def _masked_name(path: Path, table: Mapping) -> str:
     name no table could undo.
     """
     stem = engine._replace_all(path.stem, table.forward())
+    # Read back, like everything else that leaves: a name is the first
+    # thing the chat window shows, and a value the table does not hold
+    # cannot be masked out of it.
+    if any(_occurs(e.real, stem) for e in table.entries if e.real):
+        stem = "document"
     return f"{stem}_ANON{path.suffix}"

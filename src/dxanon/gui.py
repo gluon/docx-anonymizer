@@ -23,21 +23,26 @@ from PySide6.QtCore import QEvent, Qt, QUrl
 # the module loads. _check_event_types proves it did.
 from PySide6.QtGui import QCloseEvent, QDesktopServices, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QFileDialog, QHBoxLayout, QHeaderView,
+    QApplication, QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QHeaderView,
     QLabel, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QSizePolicy,
     QStackedWidget, QTableWidget, QTableWidgetItem, QTextBrowser, QVBoxLayout,
     QWidget,
 )
 
-from . import engine, plaintext, source, workflow
+from . import engine, plaintext, workflow
+from .case import SUFFIX, Case, unused
 from .detect import Certainty
-from .engine import EmptyTable, RefusedExport
+from .engine import EmptyTable
 from .mapping import Mapping
 from .netguard import NetworkGuard
 from .workflow import Decision
 
 #: Index of the help page in the stack, so the other screens stay 0..3.
+#: The two case screens are appended after it rather than inserted, so
+#: that this number, which is read in several places, does not move.
 HELP = 4
+DOSSIER = 5
+CASE_RESULTS = 6
 
 #: The one action of each screen, painted rather than left to the theme.
 #:
@@ -154,8 +159,6 @@ class Window(QMainWindow):
         _check_event_types()
         self.guard = guard
         self.grid: workflow.Grid | None = None
-        self.source_text = ""
-        self.source_file: Path | None = None
         self.workspace = Path.home() / "Documents"
 
         #: The correspondence table, held in memory and nowhere else.
@@ -169,6 +172,18 @@ class Window(QMainWindow):
         self._return_from = 0
         #: The file the result screen shows, when it shows one.
         self.result_file: Path | None = None
+        #: Everything the window works on, always. A single document is
+        #: a case with one piece: the first version kept the simple flow
+        #: separate and added "if a case is open" to every screen, which
+        #: doubled every path in the one layer no test here can run. One
+        #: object, one path; what differs between a document and a case
+        #: is what is shown, which is a question the screens answer from
+        #: the number of pieces.
+        self.case: Case = Case()
+        self.outcomes: list = []
+        #: Where the case's table was last written, so closing can offer
+        #: to write it again without asking where.
+        self.case_file: Path | None = None
 
         self.setWindowTitle("Anonymiseur de documents")
         self.resize(1100, 740)
@@ -180,6 +195,8 @@ class Window(QMainWindow):
         self.stack.addWidget(self._build_result())
         self.stack.addWidget(self._build_return())
         self.stack.addWidget(self._build_help())
+        self.stack.addWidget(self._build_dossier())
+        self.stack.addWidget(self._build_case_results())
 
         self._build_status_bar()
 
@@ -285,7 +302,9 @@ class Window(QMainWindow):
         paste.clicked.connect(self._start_text)
         open_file = QPushButton("Ouvrir un document Word")
         open_file.clicked.connect(self._start_file)
-        for button in (paste, open_file):
+        dossier = QPushButton("Un dossier, plusieurs pièces")
+        dossier.clicked.connect(self._start_case)
+        for button in (paste, open_file, dossier):
             button.setMinimumHeight(44)
             buttons.addWidget(button)
         layout.addLayout(buttons)
@@ -326,22 +345,26 @@ class Window(QMainWindow):
         work: close this window and the real names of the current cycle
         are gone for good.
         """
-        if self.mapping is None:
-            self.cycle_label.setText("")
-            self.resume_button.setVisible(False)
-            return
-
-        self.cycle_label.setText(
-            f"Cycle en cours, {len(self.mapping.entries)} noms en mémoire. "
-            "Ne fermez pas la fenêtre."
-        )
+        summary = self.case.summary()
+        self.resume_button.setVisible(bool(summary))
+        kept = (f"Table enregistrée : {self.case_file.name}" if self.case_file
+                else "Ne fermez pas la fenêtre.")
+        self.cycle_label.setText(f"{summary} {kept}" if summary else "")
         self.cycle_label.setStyleSheet("color: #d08700; font-weight: 600;")
-        self.resume_button.setVisible(True)
 
     def _start_text(self) -> None:
         self.paste_area.setVisible(True)
         self.analyse_button.setVisible(True)
         self.paste_area.setFocus()
+
+    def _fresh_case(self) -> bool:
+        """Start a case over, having asked if one is already in progress."""
+        if not self._may_start_over():
+            return False
+        self.case = Case()
+        self.case_file = None
+        self.outcomes = []
+        return True
 
     def _may_start_over(self) -> bool:
         """Ask before a new analysis replaces the table of a cycle in progress.
@@ -350,14 +373,14 @@ class Window(QMainWindow):
         word: the same loss as closing the window, which asks. So this asks
         the same question, with "Revenir" as the default.
         """
-        if self.mapping is None or not self.mapping.entries:
+        if not self.case.names:
             return True
         question = QMessageBox(self)
         question.setWindowTitle("Un cycle est en cours")
         question.setIcon(QMessageBox.Warning)
         question.setText("Un cycle est en cours")
         question.setInformativeText(
-            f"{len(self.mapping.entries)} correspondance(s) sont en mémoire et "
+            f"{self.case.names} correspondance(s) sont en mémoire et "
             "ne sont enregistrées nulle part.\n\n"
             "Si vous commencez un nouveau document, les vrais noms du cycle en "
             "cours seront définitivement perdus et tout document déjà anonymisé "
@@ -374,22 +397,19 @@ class Window(QMainWindow):
         return True
 
     def _start_file(self) -> None:
-        if not self._may_start_over():
-            return
         chosen, _ = QFileDialog.getOpenFileName(
             self, "Choisir un document Word", str(self.workspace), "Documents Word (*.docx)"
         )
-        if not chosen:
+        if not chosen or not self._fresh_case():
             return
-        self.source_file = Path(chosen)
-        self.workspace = self.source_file.parent
+        path = Path(chosen)
+        self.workspace = path.parent
         try:
-            text, images, identities = source.read_document(self.source_file)
+            self.case.add_file(path)
         except Exception as error:  # noqa: BLE001 - shown to the user as is
             _alert(self, QMessageBox.Critical, "Lecture impossible", str(error))
             return
-        self.source_text = text
-        self._open_grid(self.source_file.stem, images=images, known=identities)
+        self._analyse(path.stem)
 
     def _analyse_text(self) -> None:
         text = self.paste_area.toPlainText().strip()
@@ -397,11 +417,20 @@ class Window(QMainWindow):
             _alert(self, QMessageBox.Information, "Rien à analyser",
                    "La zone est vide. Collez-y le texte à anonymiser.")
             return
-        if not self._may_start_over():
+        if not self._fresh_case():
             return
-        self.source_text = text
-        self.source_file = None
-        self._open_grid("Texte collé")
+        self.case.add_text("Texte collé", text)
+        self._analyse("Texte collé")
+
+    def _analyse(self, label: str) -> None:
+        """Read every piece, then show the one grid they produce."""
+        missing = self.case.reread()
+        if missing:
+            _alert(self, QMessageBox.Warning, "Pièces introuvables",
+                   "Ces pièces ne sont plus à l'endroit enregistré :\n"
+                   + "\n".join(f"• {name}" for name in missing))
+        self.grid = self.case.analyse()
+        self._show_grid(f"{len(self.grid.rows)} élément(s) repéré(s) — {label}")
 
     # --------------------------------------------------------------- grid
     def _build_grid(self) -> QWidget:
@@ -451,7 +480,7 @@ class Window(QMainWindow):
         row = QHBoxLayout()
         back = QPushButton("Retour")
         back.clicked.connect(lambda: self.stack.setCurrentIndex(0))
-        run = primary(QPushButton("Produire la version anonyme"))
+        self.run_button = run = primary(QPushButton("Produire la version anonyme"))
         run.clicked.connect(self._run)
         row.addWidget(back)
         row.addStretch()
@@ -461,10 +490,25 @@ class Window(QMainWindow):
         QWidget.setTabOrder(run, back)
         return page
 
-    def _open_grid(self, label: str, images: list[str] | None = None,
-                   known: list[str] | None = None) -> None:
-        self.grid = workflow.build(self.source_text, images=images, known=known)
-        self.grid_heading.setText(f"{len(self.grid.rows)} élément(s) repéré(s) — {label}")
+    def _show_grid(self, heading: str) -> None:
+        """One grid screen for a document and for a case.
+
+        A case adds one column, saying which pieces each value appears
+        in. A name in one piece out of nine is worth a second look; a
+        name in all nine rarely is. The column is added rather than
+        always present, because an empty column in the simple flow is a
+        thing to read and dismiss on every single document.
+        """
+        several = len(self.case.pieces) > 1
+        headings = ["Masquer", "Valeur trouvée", "Occurrences", "Remplacée par", "Pourquoi"]
+        self.table.setColumnCount(6 if several else 5)
+        self.table.setHorizontalHeaderLabels(headings + (["Pièces"] if several else []))
+        if several:
+            self.table.horizontalHeader().setSectionResizeMode(
+                5, QHeaderView.ResizeToContents)
+        self.run_button.setText(
+            "Produire les pièces anonymes" if several else "Produire la version anonyme")
+        self.grid_heading.setText(heading)
         self._fill_table()
         self.images_label.setText(
             "" if not self.grid.images else
@@ -502,6 +546,9 @@ class Window(QMainWindow):
             self.table.setItem(index, 3, pseudonym)
             why = f"{CERTAINTY_LABEL[row.certainty]} — {row.why}"
             self.table.setItem(index, 4, _cell(why, tip=why))
+            if self.table.columnCount() > 5:
+                pieces = ", ".join(row.pieces)
+                self.table.setItem(index, 5, _cell(pieces, tip=pieces))
 
     def _toggle(self, row: workflow.Row, state: int) -> None:
         row.decision = Decision.REPLACE if state else Decision.KEEP
@@ -586,15 +633,16 @@ class Window(QMainWindow):
             _alert(self, QMessageBox.Warning, "Table incohérente", "\n".join(conflicts))
             return
 
-        mapping = self.grid.to_mapping()
+        folder = None
+        if len(self.case.pieces) > 1:
+            chosen = QFileDialog.getExistingDirectory(
+                self, "Où écrire les pièces anonymisées", str(self.workspace))
+            if not chosen:
+                return
+            folder = self.workspace = Path(chosen)
+
         try:
-            if self.source_file is not None:
-                destination = _unused(self.source_file.with_name(
-                    f"{_masked_stem(self.source_file.stem, mapping)}_ANON.docx"))
-                engine.anonymize(self.source_file, destination, mapping)
-                shown, written = "", destination
-            else:
-                shown, written = plaintext.anonymize(self.source_text, mapping), None
+            self.outcomes = self.case.export(folder=folder)
         except EmptyTable:
             _alert(
                 self, QMessageBox.Warning,
@@ -603,19 +651,35 @@ class Window(QMainWindow):
                 "l'original sous un autre nom. Cochez au moins une ligne de la grille.",
             )
             return
-        except RefusedExport as refused:
-            _alert(
-                self, QMessageBox.Critical,
-                "Export refusé, rien n'a été écrit",
-                "Des valeurs réelles subsistent :\n\n"
-                + "\n".join(f"• {r.value} ({r.where})" for r in refused.residues[:12]),
-            )
-            return
 
-        self.mapping = mapping
+        self.mapping = self.case.table
         self._refresh_cycle()
         self._refresh_network_label()
-        self._show_result("Version anonyme — à soumettre à l'IA", shown, written)
+        self._show_outcomes()
+
+    def _show_outcomes(self) -> None:
+        """One piece reads as a result; several read as a list.
+
+        A single document showing a one-row table of results would be a
+        screen asking to be read before it says anything, so it keeps
+        the result screen it always had. The refusal, for one piece, is
+        the only thing on screen, so it is a dialog; among several it is
+        a line beside the piece it concerns.
+        """
+        if len(self.outcomes) == 1:
+            only = self.outcomes[0]
+            if not only.ok:
+                _alert(
+                    self, QMessageBox.Critical,
+                    "Export refusé, rien n'a été écrit",
+                    "Des valeurs réelles subsistent :\n\n"
+                    + "\n".join(f"• {value}" for value in only.refused[:12]),
+                )
+                return
+            self._show_result("Version anonyme — à soumettre à l'IA",
+                              only.text or "", only.written)
+            return
+        self._show_case_results()
 
     # ------------------------------------------------------------- return
     def _build_return(self) -> QWidget:
@@ -640,6 +704,25 @@ class Window(QMainWindow):
         )
         layout.addWidget(self.allow_partial)
 
+        # Which piece is coming back. A case's table holds the pseudonyms
+        # of every piece, and the check that a pseudonym has not been
+        # reworded can only be asked of the piece that carried it: asked
+        # of the whole case, every piece is refused for the names it
+        # never contained. Left on "detect", a document is recognised by
+        # the name it was written under and a single piece needs no
+        # answer at all.
+        self.piece_row = QWidget()
+        piece_layout = QHBoxLayout(self.piece_row)
+        piece_layout.setContentsMargins(0, 0, 0, 0)
+        piece_label = QLabel("Pièce concernée :")
+        self.piece_choice = QComboBox()
+        self.piece_choice.setAccessibleName("Pièce concernée")
+        piece_label.setBuddy(self.piece_choice)
+        piece_layout.addWidget(piece_label)
+        piece_layout.addWidget(self.piece_choice, stretch=1)
+        self.piece_row.setVisible(False)
+        layout.addWidget(self.piece_row)
+
         row = QHBoxLayout()
         # The only screen without a way back: reached by mistake, it could
         # be left only by starting a restoration or through the help.
@@ -662,9 +745,18 @@ class Window(QMainWindow):
 
     def _open_return(self) -> None:
         self._return_from = self.stack.currentIndex()
+        self.piece_row.setVisible(len(self.case.pieces) > 1)
+        self.piece_choice.clear()
+        self.piece_choice.addItem("Reconnaître automatiquement", None)
+        for piece in self.case.pieces:
+            self.piece_choice.addItem(piece.label, piece.label)
         self.stack.setCurrentIndex(3)
 
+    def _chosen_piece(self) -> str | None:
+        return self.piece_choice.currentData() if self.piece_row.isVisible() else None
+
     def _mapping(self) -> Mapping | None:
+        self.mapping = self.case.table
         if self.mapping is None:
             _alert(
                 self, QMessageBox.Warning,
@@ -688,19 +780,22 @@ class Window(QMainWindow):
                 "ou ouvrez le document corrigé.",
             )
             return
-        try:
-            restored, missing = plaintext.deanonymize(
-                self.return_area.toPlainText(), mapping,
-                require_all=not self.allow_partial.isChecked(),
-            )
-        except RefusedExport as refused:
-            self._explain_refusal(refused, mapping)
+        self._finish(self.case.restore_text(
+            self.return_area.toPlainText(), label=self._chosen_piece(),
+            allow_partial=self.allow_partial.isChecked(),
+        ), "Texte restauré", mapping)
+
+    def _finish(self, outcome, heading: str, mapping: Mapping) -> None:
+        """One ending for both restorations: refused, partial, or done."""
+        if not outcome.ok:
+            self._explain_refusal(outcome, mapping)
             return
-        self._show_result("Texte restauré", restored, restored=True)
-        if missing:
+        self._show_result(heading, outcome.text or "", outcome.written, restored=True)
+        if outcome.unresolved:
             _alert(
                 self, QMessageBox.Information, "Restauration partielle",
-                "Non restaurés :\n" + "\n".join(f"• {v}" for v in missing[:12]),
+                "Non restaurés :\n"
+                + "\n".join(f"• {value}" for value in outcome.unresolved[:12]),
             )
 
     def _restore_file(self) -> None:
@@ -712,20 +807,18 @@ class Window(QMainWindow):
         )
         if not chosen:
             return
-        source = Path(chosen)
-        stem = _restored_stem(source.stem.replace("_ANON", ""), mapping)
-        destination = _unused(source.with_name(f"{stem}_FINAL.docx"))
-        try:
-            engine.deanonymize(source, destination, mapping,
-                               require_all=not self.allow_partial.isChecked())
-        except RefusedExport as refused:
-            self._explain_refusal(refused, mapping)
-            return
-        self._show_result("Document restauré", written=destination, restored=True)
+        corrected = Path(chosen)
+        stem = _restored_stem(corrected.stem.replace("_ANON", ""), mapping)
+        self._finish(self.case.restore_file(
+            corrected,
+            destination=unused(corrected.with_name(f"{stem}_FINAL.docx")),
+            label=self._chosen_piece(),
+            allow_partial=self.allow_partial.isChecked(),
+        ), "Document restauré", mapping)
 
-    def _explain_refusal(self, refused: RefusedExport, mapping: Mapping) -> None:
+    def _explain_refusal(self, outcome, mapping: Mapping) -> None:
         expected = [e for e in mapping.entries if e.pseudonym and mapping.was_used(e)]
-        if len(refused.residues) >= len(expected):
+        if len(outcome.refused) >= len(expected):
             # Not one pseudonym came back: the AI did not reword them all,
             # this is another text. Saying "reworded" sent the user looking
             # for a problem that was not there.
@@ -737,14 +830,268 @@ class Window(QMainWindow):
                 "cycle, ni la réponse de l'IA à son sujet.",
             )
             return
+        several = len(self.case.pieces) > 1
         _alert(
             self, QMessageBox.Critical,
             "Restauration refusée, rien n'a été écrit",
-            "Ces pseudonymes n'ont pas été retrouvés dans le texte renvoyé. "
+            (f"Pièce : {outcome.label}\n\n" if several else "")
+            + "Ces pseudonymes n'ont pas été retrouvés dans le texte renvoyé. "
             "L'IA les a probablement reformulés, et ils ne peuvent donc plus être "
             "remplacés par les vrais noms :\n\n"
-            + "\n".join(f"• {r.value}" for r in refused.residues[:12])
-            + "\n\nCorrigez-les dans le texte, ou cochez « Je ne colle qu'une partie du texte ».",
+            + "\n".join(f"• {value}" for value in outcome.refused[:12])
+            + "\n\nCorrigez-les dans le texte, cochez « Je ne colle qu'une partie "
+            "du texte », ou vérifiez la pièce choisie.",
+        )
+
+    # ------------------------------------------------------------ dossier
+    def _build_dossier(self) -> QWidget:
+        """The pieces of one case, before anything is analysed.
+
+        Two buttons and a list. A case screen that asked for a name, a
+        reference, a client and a folder before the first document would
+        be a form, and a form is what makes people go back to doing it by
+        hand.
+        """
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(12)
+
+        heading = QLabel("Un dossier")
+        heading.setFont(QFont(self.font().family(), 15, QFont.Bold))
+        layout.addWidget(heading)
+        layout.addWidget(QLabel(
+            "Un même nom reçoit le même pseudonyme dans toutes les pièces."
+        ))
+
+        self.pieces_table = QTableWidget(0, 2)
+        self.pieces_table.setTabKeyNavigation(False)
+        self.pieces_table.setAccessibleName("Pièces du dossier")
+        self.pieces_table.setHorizontalHeaderLabels(["Pièce", "Nature"])
+        self.pieces_table.verticalHeader().setVisible(False)
+        self.pieces_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.pieces_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeToContents)
+        layout.addWidget(self.pieces_table, stretch=1)
+
+        self.case_paste = QPlainTextEdit()
+        self.case_paste.setTabChangesFocus(True)
+        self.case_paste.setPlaceholderText("Collez ici le contenu d'un mail, puis « Ajouter ce texte »…")
+        self.case_paste.setAccessibleName("Texte à ajouter au dossier")
+        self.case_paste.setVisible(False)
+        layout.addWidget(self.case_paste)
+
+        add_row = QHBoxLayout()
+        add_file = QPushButton("Ajouter un document Word")
+        add_file.clicked.connect(self._case_add_file)
+        add_text = QPushButton("Ajouter un texte collé")
+        add_text.clicked.connect(self._case_show_paste)
+        self.case_add_text_button = QPushButton("Ajouter ce texte")
+        self.case_add_text_button.setVisible(False)
+        self.case_add_text_button.clicked.connect(self._case_add_text)
+        drop = QPushButton("Retirer la pièce choisie")
+        drop.clicked.connect(self._case_remove)
+        for button in (add_file, add_text, self.case_add_text_button, drop):
+            add_row.addWidget(button)
+        add_row.addStretch()
+        layout.addLayout(add_row)
+
+        row = QHBoxLayout()
+        back = QPushButton("Retour")
+        back.clicked.connect(lambda: self.stack.setCurrentIndex(0))
+        reopen = QPushButton("Reprendre une table enregistrée")
+        reopen.clicked.connect(self._case_load)
+        self.case_analyse = primary(QPushButton("Analyser le dossier"))
+        self.case_analyse.clicked.connect(self._case_analyse)
+        row.addWidget(back)
+        row.addWidget(reopen)
+        row.addStretch()
+        row.addWidget(self.case_analyse)
+        layout.addLayout(row)
+        return page
+
+    def _start_case(self) -> None:
+        if not self.case.pieces and not self._fresh_case():
+            return
+        self._refresh_pieces()
+        self.stack.setCurrentIndex(DOSSIER)
+
+    def _refresh_pieces(self) -> None:
+        pieces = self.case.pieces
+        self.pieces_table.setRowCount(len(pieces))
+        for index, piece in enumerate(pieces):
+            self.pieces_table.setItem(index, 0, _cell(piece.label, tip=piece.label))
+            self.pieces_table.setItem(
+                index, 1, _cell("Document Word" if piece.is_file else "Texte collé"))
+        self.case_analyse.setEnabled(bool(pieces))
+
+    def _case_add_file(self) -> None:
+        chosen, _ = QFileDialog.getOpenFileName(
+            self, "Ajouter un document au dossier", str(self.workspace),
+            "Documents Word (*.docx)",
+        )
+        if not chosen:
+            return
+        path = Path(chosen)
+        self.workspace = path.parent
+        try:
+            self.case.add_file(path)
+        except Exception as error:  # noqa: BLE001 - shown to the user as is
+            _alert(self, QMessageBox.Warning, "Pièce non ajoutée", str(error))
+            return
+        self._refresh_pieces()
+
+    def _case_show_paste(self) -> None:
+        self.case_paste.setVisible(True)
+        self.case_add_text_button.setVisible(True)
+        self.case_paste.setFocus()
+
+    def _case_add_text(self) -> None:
+        text = self.case_paste.toPlainText().strip()
+        if not text:
+            _alert(self, QMessageBox.Information, "Rien à ajouter",
+                   "La zone est vide. Collez-y le contenu à anonymiser.")
+            return
+        pasted = sum(1 for p in self.case.pieces if not p.is_file)
+        self.case.add_text(f"Texte collé {pasted + 1}", text)
+        self.case_paste.clear()
+        self.case_paste.setVisible(False)
+        self.case_add_text_button.setVisible(False)
+        self._refresh_pieces()
+
+    def _case_remove(self) -> None:
+        index = self.pieces_table.currentRow()
+        if index < 0 or index >= len(self.case.pieces):
+            _alert(self, QMessageBox.Information, "Aucune pièce choisie",
+                   "Cliquez d'abord sur la ligne de la pièce à retirer.")
+            return
+        self.case.remove(self.case.pieces[index].label)
+        self._refresh_pieces()
+
+    def _case_analyse(self) -> None:
+        if self.case.pieces:
+            self._analyse(f"dossier, {len(self.case.pieces)} pièce(s)")
+
+    def _case_load(self) -> None:
+        chosen, _ = QFileDialog.getOpenFileName(
+            self, "Reprendre une table de dossier", str(self.workspace),
+            f"Tables de noms (*{SUFFIX});;Tous les fichiers (*)",
+        )
+        if not chosen:
+            return
+        try:
+            self.case = Case.load(Path(chosen))
+        except Exception as error:  # noqa: BLE001 - shown to the user as is
+            _alert(self, QMessageBox.Critical, "Table illisible", str(error))
+            return
+        self.case_file = Path(chosen)
+        self.mapping = self.case.table
+        self._refresh_pieces()
+        self._refresh_cycle()
+        _alert(self, QMessageBox.Information, "Dossier repris",
+               f"{len(self.case.table.entries)} correspondance(s) reprises. "
+               "Vous pouvez restituer les vrais noms, ou analyser à nouveau "
+               "le dossier pour y ajouter une pièce.")
+
+    # ----------------------------------------------------- case, the result
+    def _build_case_results(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(12)
+
+        self.case_result_heading = QLabel()
+        self.case_result_heading.setFont(QFont(self.font().family(), 15, QFont.Bold))
+        layout.addWidget(self.case_result_heading)
+
+        self.case_results_table = QTableWidget(0, 3)
+        self.case_results_table.setTabKeyNavigation(False)
+        self.case_results_table.setAccessibleName("Pièces produites")
+        self.case_results_table.setHorizontalHeaderLabels(["Pièce", "Résultat", ""])
+        self.case_results_table.verticalHeader().setVisible(False)
+        self.case_results_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeToContents)
+        self.case_results_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.case_results_table.horizontalHeader().setSectionResizeMode(
+            2, QHeaderView.ResizeToContents)
+        layout.addWidget(self.case_results_table, stretch=1)
+
+        self.case_refusals = QLabel()
+        self.case_refusals.setWordWrap(True)
+        self.case_refusals.setStyleSheet("color: #b02a37; font-weight: 700;")
+        layout.addWidget(self.case_refusals)
+
+        row = QHBoxLayout()
+        back = QPushButton("Retour à la grille")
+        back.clicked.connect(lambda: self.stack.setCurrentIndex(1))
+        save = QPushButton("Enregistrer la table du dossier")
+        save.clicked.connect(self._case_save)
+        done = primary(QPushButton("J'ai les réponses de l'IA, remettre les vrais noms"))
+        done.clicked.connect(self._open_return)
+        row.addWidget(back)
+        row.addWidget(save)
+        row.addStretch()
+        row.addWidget(done)
+        layout.addLayout(row)
+        return page
+
+    def _show_case_results(self) -> None:
+        """What became of each piece.
+
+        A piece that is refused does not stop the others: nothing was
+        written for it, and a case of nine pieces where one holds a
+        surviving name is a case where eight are ready. The refusals are
+        named on the same screen rather than in a dialog that has to be
+        dismissed before the list can be read.
+        """
+        written = [o for o in self.outcomes if o.ok]
+        refused = [o for o in self.outcomes if not o.ok]
+        self.case_result_heading.setText(
+            f"{len(written)} pièce(s) produite(s)"
+            + (f", {len(refused)} refusée(s)" if refused else "")
+        )
+        self.case_results_table.setRowCount(len(self.outcomes))
+        for index, outcome in enumerate(self.outcomes):
+            self.case_results_table.setItem(index, 0, _cell(outcome.label, tip=outcome.label))
+            detail = outcome.description
+            self.case_results_table.setItem(index, 1, _cell(detail, tip=detail))
+            if outcome.ok:
+                action = QPushButton(
+                    "Ouvrir le dossier" if outcome.written else "Copier")
+                action.clicked.connect(lambda _=False, o=outcome: self._case_take(o))
+                self.case_results_table.setCellWidget(index, 2, action)
+        self.case_refusals.setText(
+            "" if not refused else
+            "Rien n'a été écrit pour les pièces refusées : une valeur réelle y "
+            "survivait au masquage. Revenez à la grille et vérifiez les "
+            "pseudonymes concernés."
+        )
+        self.stack.setCurrentIndex(CASE_RESULTS)
+
+    def _case_take(self, outcome) -> None:
+        if outcome.written is not None:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(outcome.written.parent)))
+            return
+        QApplication.clipboard().setText(outcome.text or "")
+
+    def _case_save(self) -> None:
+        suggested = self.case_file or (self.workspace / f"dossier{SUFFIX}")
+        chosen, _ = QFileDialog.getSaveFileName(
+            self, "Enregistrer la table du dossier", str(suggested),
+            f"Tables de noms (*{SUFFIX})",
+        )
+        if not chosen:
+            return
+        try:
+            self.case_file = self.case.save(Path(chosen))
+        except Exception as error:  # noqa: BLE001 - shown to the user as is
+            _alert(self, QMessageBox.Critical, "Enregistrement impossible", str(error))
+            return
+        _alert(
+            self, QMessageBox.Information, "Table enregistrée",
+            f"{self.case_file}\n\nCe fichier contient les vrais noms du dossier. "
+            "Il ne doit pas être transmis, ni joint à un courriel, ni déposé "
+            "dans un espace partagé.",
         )
 
     # -------------------------------------------------------------- reset
@@ -756,13 +1103,13 @@ class Window(QMainWindow):
         confirmation: once dropped, a document already masked can never
         be turned back.
         """
-        if confirm and self.mapping is not None and self.mapping.entries:
+        if confirm and self.case.names:
             question = QMessageBox(self)
             question.setWindowTitle("Effacer le cycle")
             question.setIcon(QMessageBox.Warning)
             question.setText("Effacer le cycle ?")
             question.setInformativeText(
-                f"Les {len(self.mapping.entries)} correspondance(s) en mémoire seront effacées. "
+                f"Les {self.case.names} correspondance(s) en mémoire seront effacées. "
                 "Les vrais noms de ce cycle ne pourront plus être remis. "
                 "Tout document déjà anonymisé deviendra définitivement illisible."
             )
@@ -775,8 +1122,9 @@ class Window(QMainWindow):
 
         self.mapping = None
         self.grid = None
-        self.source_text = ""
-        self.source_file = None
+        self.case = Case()
+        self.case_file = None
+        self.outcomes = []
         self.paste_area.clear()
         self.paste_area.setVisible(False)
         self.analyse_button.setVisible(False)
@@ -790,13 +1138,13 @@ class Window(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 (Qt's own spelling)
         """Closing the window is what loses a cycle, so it asks first."""
-        if self.mapping is not None and self.mapping.entries:
+        if self.case.names and self.case_file is None:
             question = QMessageBox(self)
             question.setWindowTitle("Un cycle est en cours")
             question.setIcon(QMessageBox.Warning)
             question.setText("Un cycle est en cours")
             question.setInformativeText(
-                f"{len(self.mapping.entries)} correspondance(s) sont en mémoire et "
+                f"{self.case.names} correspondance(s) sont en mémoire et "
                 "ne sont enregistrées nulle part.\n\n"
                 "Si vous fermez maintenant, les vrais noms de ce cycle seront "
                 "définitivement perdus et tout document déjà anonymisé deviendra "
@@ -844,37 +1192,6 @@ def _alert(parent: QWidget, icon: QMessageBox.Icon, title: str, body: str) -> No
     box.setText(title)
     box.setInformativeText(body)
     box.exec()
-
-
-def _masked_stem(stem: str, mapping: Mapping) -> str:
-    """The file name that travels with the masked document, masked too.
-
-    The file went out as ``Dossier_Benzaoui_ANON.docx``: the refusal check
-    reads every entry inside the package, but not the name of the package
-    itself, and the name is what the chat window shows first. A copy of
-    the table does the masking, so that a value seen only in the file name
-    is not recorded as used by the document, which would make the return
-    trip demand a pseudonym the document never contained.
-    """
-    try:
-        return plaintext.anonymize(stem, Mapping(mapping.entries))
-    except RefusedExport:
-        return "document"
-
-
-def _unused(path: Path) -> Path:
-    """``path``, or the first ``name_2``, ``name_3``… that does not exist.
-
-    The tool writes next to the document, under names it chooses, and
-    the file already there may be the one that just came back from the
-    AI, saved under the same name, existing nowhere else. A question
-    would be clicked through; a new name costs nothing.
-    """
-    candidate, number = path, 2
-    while candidate.exists():
-        candidate = path.with_name(f"{path.stem}_{number}{path.suffix}")
-        number += 1
-    return candidate
 
 
 def _restored_stem(stem: str, mapping: Mapping) -> str:

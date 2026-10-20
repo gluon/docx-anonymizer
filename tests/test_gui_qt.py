@@ -28,13 +28,28 @@ except ImportError:  # pragma: no cover - environment without Qt
 
 SAMPLE = Path(__file__).with_name("sample_mail.txt").read_text(encoding="utf-8")
 
-HOME, GRID, RESULT, RETURN, HELP = range(5)
+HOME, GRID, RESULT, RETURN, HELP, DOSSIER, CASE_RESULTS = range(7)
 
 
 
 class _NoNetwork:
     clean = True
     attempts = 0
+
+
+def _dismiss(tries: int = 100) -> None:
+    """Close whatever modal box comes up, whichever button it offers.
+
+    Retried rather than fired once: a box is only there once ``exec``
+    has started, and a handler that looks too early finds nothing and
+    leaves the window blocked for good.
+    """
+    box = QApplication.activeModalWidget()
+    if isinstance(box, QMessageBox) and box.buttons():
+        box.buttons()[0].click()
+        return
+    if tries:
+        QTimer.singleShot(20, lambda: _dismiss(tries - 1))
 
 
 @unittest.skipIf(QApplication is None, "PySide6 not installed")
@@ -55,7 +70,12 @@ class WindowTests(unittest.TestCase):
 
     def tearDown(self):
         self.alive = False  # a handler still waiting must not answer the next test
-        self.window.mapping = None  # let it close without asking
+        # Let it close without asking. The window asks when names are
+        # held and nothing is saved, and it reads that from the case, so
+        # emptying the mapping alone is no longer enough: every test
+        # would hang on a modal nobody answers.
+        self.window.mapping = None
+        self.window.case = self.gui.Case()
         self.window.close()
         self.window.deleteLater()
 
@@ -470,6 +490,198 @@ class WindowTests(unittest.TestCase):
         self.click("Effacer le cycle")
         self.assertIsNone(self.window.mapping)
         self.assertEqual(self.at(), HOME)
+
+
+    # ------------------------------------------------------------- dossier
+    def _case_of_two(self, folder: Path):
+        """A document and a pasted text, in one case, analysed."""
+        from unittest import mock
+        from PySide6.QtWidgets import QFileDialog
+        import fixtures
+
+        source = fixtures.build(folder / "Dossier_Dupont.docx")
+        self.click("Un dossier, plusieurs pièces")
+        self.assertEqual(self.at(), DOSSIER)
+        with mock.patch.object(QFileDialog, "getOpenFileName", return_value=(str(source), "")):
+            self.click("Ajouter un document Word")
+        self.click("Ajouter un texte collé")
+        self.window.case_paste.insertPlainText(
+            "Jean Dupont conteste. Son conseil est Maitre Sylvie Marchand."
+        )
+        self.click("Ajouter ce texte")
+        self.assertEqual(self.window.pieces_table.rowCount(), 2)
+        self.click("Analyser le dossier")
+        self.assertEqual(self.at(), GRID)
+        return source
+
+    def test_a_case_walks_from_its_pieces_to_the_grid(self):
+        import tempfile
+
+        self._case_of_two(Path(tempfile.mkdtemp()))
+        self.assertEqual(self.window.table.columnCount(), 6)
+        self.assertEqual(
+            self.window.table.horizontalHeaderItem(5).text(), "Pièces")
+        self.assertGreater(self.window.table.rowCount(), 0)
+
+    def test_one_document_keeps_the_five_column_grid(self):
+        """The simple flow must not grow a column it has nothing to put in."""
+        self.to_grid()
+        self.assertEqual(self.window.table.columnCount(), 5)
+
+    def test_the_same_person_carries_one_name_across_the_pieces(self):
+        import tempfile
+
+        self._case_of_two(Path(tempfile.mkdtemp()))
+        rows = {row.value: row for row in self.window.grid.rows}
+        self.assertEqual(rows["Jean Dupont"].group, rows["DUPONT"].group)
+        self.assertEqual(
+            rows["Jean Dupont"].pseudonym.split()[-1].upper(),
+            rows["DUPONT"].pseudonym.upper(),
+        )
+
+    def test_a_case_writes_every_piece_into_the_chosen_folder(self):
+        import tempfile
+        from unittest import mock
+        from PySide6.QtWidgets import QFileDialog
+
+        folder = Path(tempfile.mkdtemp())
+        out = Path(tempfile.mkdtemp())
+        self._case_of_two(folder)
+        with mock.patch.object(QFileDialog, "getExistingDirectory", return_value=str(out)):
+            self.click("Produire les pièces anonymes")
+        self.assertEqual(self.at(), CASE_RESULTS)
+        self.assertEqual(self.window.case_results_table.rowCount(), 2)
+        written = list(out.glob("*_ANON.docx"))
+        self.assertEqual(len(written), 1, [p.name for p in out.iterdir()])
+        self.assertNotIn("Dupont", written[0].name)
+
+    def test_a_pasted_piece_is_copied_from_the_list(self):
+        import tempfile
+        from unittest import mock
+        from PySide6.QtWidgets import QApplication as App, QFileDialog
+
+        out = Path(tempfile.mkdtemp())
+        self._case_of_two(Path(tempfile.mkdtemp()))
+        with mock.patch.object(QFileDialog, "getExistingDirectory", return_value=str(out)):
+            self.click("Produire les pièces anonymes")
+        self.click("Copier")
+        masked = App.clipboard().text()
+        self.assertTrue(masked)
+        self.assertNotIn("Dupont", masked)
+
+    def test_restoring_one_piece_is_not_refused_for_the_others(self):
+        """The case's table holds pseudonyms this piece never carried.
+
+        Asked of the whole table, the check that a pseudonym has not
+        been reworded refuses every piece for the names it never
+        contained. This is that regression, driven through the window.
+        """
+        import tempfile
+        from unittest import mock
+        from PySide6.QtWidgets import QApplication as App, QFileDialog
+
+        out = Path(tempfile.mkdtemp())
+        self._case_of_two(Path(tempfile.mkdtemp()))
+        with mock.patch.object(QFileDialog, "getExistingDirectory", return_value=str(out)):
+            self.click("Produire les pièces anonymes")
+        self.click("Copier")
+        masked = App.clipboard().text()
+
+        self.click("J'ai les réponses de l'IA, remettre les vrais noms")
+        self.assertEqual(self.at(), RETURN)
+        self.assertTrue(self.window.piece_row.isVisible())
+        index = self.window.piece_choice.findText("Texte collé 1")
+        self.assertGreater(index, 0)
+        self.window.piece_choice.setCurrentIndex(index)
+        self.window.return_area.setPlainText(masked)
+        self.click("Remettre les vrais noms")
+        self.assertEqual(self.at(), RESULT, self.seen_dialogs)
+        self.assertIn("Jean Dupont", self.window.result_area.toPlainText())
+
+    def test_the_piece_question_is_not_asked_of_a_single_document(self):
+        self.to_result()
+        self.click("J'ai la réponse de l'IA, remettre les vrais noms")
+        self.assertFalse(self.window.piece_row.isVisible())
+
+    def test_the_same_document_cannot_be_added_twice(self):
+        import tempfile
+        from unittest import mock
+        from PySide6.QtWidgets import QFileDialog
+        import fixtures
+
+        folder = Path(tempfile.mkdtemp())
+        source = fixtures.build(folder / "Dossier_Dupont.docx")
+        self.click("Un dossier, plusieurs pièces")
+        for attempt in range(2):
+            if attempt:
+                self.answer_next_dialog()
+            with mock.patch.object(QFileDialog, "getOpenFileName",
+                                   return_value=(str(source), "")):
+                self.click("Ajouter un document Word")
+        self.assertEqual(self.window.pieces_table.rowCount(), 1)
+        self.assertTrue(any("déjà" in text for text in self.seen_dialogs),
+                        self.seen_dialogs)
+
+    def test_a_piece_can_be_removed(self):
+        import tempfile
+
+        self._case_of_two(Path(tempfile.mkdtemp()))
+        self.click("Retour")
+        self.click("Un dossier, plusieurs pièces")
+        self.assertEqual(self.at(), DOSSIER)
+        self.window.pieces_table.setCurrentCell(0, 0)
+        self.click("Retirer la pièce choisie")
+        self.assertEqual(self.window.pieces_table.rowCount(), 1)
+
+    def test_a_saved_table_is_reopened_and_restores(self):
+        import tempfile
+        from unittest import mock
+        from PySide6.QtWidgets import QApplication as App, QFileDialog
+
+        out = Path(tempfile.mkdtemp())
+        self._case_of_two(Path(tempfile.mkdtemp()))
+        with mock.patch.object(QFileDialog, "getExistingDirectory", return_value=str(out)):
+            self.click("Produire les pièces anonymes")
+        self.click("Copier")
+        masked = App.clipboard().text()
+
+        table = out / f"dossier{self.gui.SUFFIX}"
+        with mock.patch.object(QFileDialog, "getSaveFileName", return_value=(str(table), "")):
+            QTimer.singleShot(0, _dismiss)
+            self.click("Enregistrer la table du dossier")
+        self.assertTrue(table.exists())
+        self.assertIn("ne doit pas être transmis", table.read_text(encoding="utf-8"))
+
+        fresh = self.gui.Window(_NoNetwork())
+        try:
+            fresh.show()
+            with mock.patch.object(QFileDialog, "getOpenFileName", return_value=(str(table), "")):
+                QTimer.singleShot(0, _dismiss)
+                fresh._case_load()
+            self.assertEqual(len(fresh.case.pieces), 2)
+            outcome = fresh.case.restore_text(masked, label="Texte collé 1")
+            self.assertTrue(outcome.ok, outcome.refused)
+            self.assertIn("Jean Dupont", outcome.text)
+        finally:
+            fresh.case = self.gui.Case()
+            fresh.close()
+            fresh.deleteLater()
+
+    def test_closing_a_saved_case_does_not_ask(self):
+        """Saved, there is nothing left to lose by closing."""
+        import tempfile
+        from unittest import mock
+        from PySide6.QtWidgets import QFileDialog
+
+        out = Path(tempfile.mkdtemp())
+        self._case_of_two(Path(tempfile.mkdtemp()))
+        with mock.patch.object(QFileDialog, "getExistingDirectory", return_value=str(out)):
+            self.click("Produire les pièces anonymes")
+        table = out / f"dossier{self.gui.SUFFIX}"
+        with mock.patch.object(QFileDialog, "getSaveFileName", return_value=(str(table), "")):
+            QTimer.singleShot(0, _dismiss)
+            self.click("Enregistrer la table du dossier")
+        self.assertTrue(self.window.close())
 
 
 class StartupTypeCheck(unittest.TestCase):

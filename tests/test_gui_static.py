@@ -64,15 +64,36 @@ class StaticChecks(unittest.TestCase):
                     f"gui calls {module_name}.{attribute}, which no longer exists",
                 )
 
+    #: Branching allowed per screen. A flat number went stale the first
+    #: time a screen was added: the case flow brought two more, the
+    #: budget of 40 was breached at 65, and the fix was not to raise it
+    #: but to find what the breach was pointing at. It was pointing at
+    #: something real. Every screen had grown "if a case is open", so
+    #: each path existed twice in the one layer the suite cannot run
+    #: here; the window was rewritten to work on a case always, a single
+    #: document being a case of one piece, and what was left came down
+    #: to what a screen has to decide for itself: an empty field, a
+    #: cancelled dialog, nothing selected, one piece or several.
+    #:
+    #: Keyed on the number of screens so it keeps meaning something as
+    #: screens are added, and sized from what the five original screens
+    #: cost, with a little room.
+    BRANCHES_PER_SCREEN = 7
+
     def test_the_window_stays_thin(self):
         """Logic in here is logic no test covers.
 
         A budget rather than a rule: if the window grows past it, the
-        reason is usually a decision that belongs in workflow.py, where
-        it can be tested.
+        reason is usually a decision that belongs in workflow.py or
+        case.py, where it can be tested.
         """
         statements = sum(isinstance(n, (ast.If, ast.For, ast.While)) for n in ast.walk(self.tree))
-        self.assertLess(statements, 40, "branching logic is accumulating in the untested layer")
+        screens = self.source.count("def _build_")
+        self.assertLessEqual(
+            statements, self.BRANCHES_PER_SCREEN * screens,
+            f"{statements} branches over {screens} screens: "
+            "branching logic is accumulating in the untested layer",
+        )
 
     def test_the_refusal_path_tells_the_user_nothing_was_written(self):
         """The one message that must not be reassuring by accident."""
