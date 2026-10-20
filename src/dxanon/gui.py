@@ -397,10 +397,18 @@ class Window(QMainWindow):
         return True
 
     def _start_file(self) -> None:
+        # Asked before the file picker, not after. Reversed, the window
+        # offered to choose a document and only then said that choosing
+        # one would lose the names of the cycle in progress, which is
+        # backwards; and a test that had encoded the order held the
+        # Windows job for ten minutes on a native dialog nobody could
+        # answer.
+        if not self._fresh_case():
+            return
         chosen, _ = QFileDialog.getOpenFileName(
             self, "Choisir un document Word", str(self.workspace), "Documents Word (*.docx)"
         )
-        if not chosen or not self._fresh_case():
+        if not chosen:
             return
         path = Path(chosen)
         self.workspace = path.parent

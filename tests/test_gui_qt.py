@@ -494,8 +494,18 @@ class WindowTests(unittest.TestCase):
         self.assertIs(self.window.mapping, held)
         self.assertEqual(self.at(), HOME)
 
+        # The file picker must not open before the question is answered.
+        # Asserted rather than left to chance: a native dialog in a
+        # headless job waits for a click that never comes, and the test
+        # that used to encode this by comment hung for ten minutes.
+        from unittest import mock
+        from PySide6.QtWidgets import QFileDialog
+
         self.answer_next_dialog("Revenir")
-        self.click("Ouvrir un document Word")  # no file dialog may open
+        with mock.patch.object(QFileDialog, "getOpenFileName",
+                               return_value=("", "")) as picker:
+            self.click("Ouvrir un document Word")
+        picker.assert_not_called()
         self.assertIs(self.window.mapping, held)
 
         self.answer_next_dialog("Abandonner le cycle")
