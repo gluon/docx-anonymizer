@@ -289,7 +289,12 @@ The release is built on Python 3.12, which is also the version both CI
 jobs run, so 3.12 is the supported runtime and the one the executable
 embeds. Development on 3.14 works and is what the macOS runs used; the
 code targets 3.11 and above. Nothing in it depends on a version-specific
-feature, and the suite passing on two versions is the only claim made. A segfault on quit was reported once on macOS and could
+feature, and the suite passing on two versions is the only claim made.
+
+The recognition engine is the exception: it declares Python < 3.13, so
+`pip install .[ocr]` on 3.14 installs everything except the engine and
+the window says it cannot read images. Reading a scan needs a 3.12
+environment, which is what the executable is built in. A segfault on quit was reported once on macOS and could
 not be reproduced; the lazy type creation seen in its trace now happens
 at import instead of at closing time, which is checked at startup, but
 the crash itself is not proven gone.
