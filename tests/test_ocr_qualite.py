@@ -174,8 +174,21 @@ class WhatTheEngineReads(unittest.TestCase):
                       f"read back as:\n{self.text}")
 
     def test_a_name_in_the_middle_of_a_line_is_still_a_name(self):
-        self.assertIn("KARIM BENHADDOU", self.text.upper(),
+        """Welded or not, it has to be there and it has to be masked.
+
+        Written first as "KARIM BENHADDOU", which asked for something
+        the splitter does not promise: a first name against a surname
+        has no known word between them, and a dictionary of first names
+        that splits those also splits words that merely contain one. One
+        token, masked as one token.
+        """
+        from dxanon import plaintext, workflow
+
+        self.assertIn("KARIMBENHADDOU", self.text.upper().replace(" ", ""),
                       f"read back as:\n{self.text}")
+        grid = workflow.build(self.text)
+        masked = plaintext.anonymize(self.text, grid.to_mapping())
+        self.assertNotIn("BENHADDOU", masked.upper(), f"read back as:\n{self.text}")
 
     def test_an_address_keeps_its_number_and_its_town(self):
         upper = self.text.upper()
