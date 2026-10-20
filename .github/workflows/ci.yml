@@ -134,9 +134,32 @@ jobs:
           }
           if ($p.ExitCode -ne 0) { throw "the executable exited with $($p.ExitCode)" }
 
+      - name: Check the engine made it into the bundle
+        # This job installs the recognition engine on purpose, so a
+        # bundle without it is a bundle that dropped a package in
+        # silence, which is the failure one-file builds are good at and
+        # which would otherwise reach the user as "cette version ne sait
+        # pas lire les images".
+        timeout-minutes: 3
+        run: |
+          dist\Anonymiseur.exe --self-check > check.log 2>&1
+          Get-Content check.log | ForEach-Object { Write-Host $_ }
+          if (-not (Select-String -Path check.log -Pattern "lecture d'images incluse" -Quiet)) {
+            Write-Host "::error::the bundle has no recognition engine"
+            throw "the bundle has no recognition engine"
+          }
+
+      - name: A name an artifact is allowed to have
+        # A branch name carries a slash and an artifact name may not:
+        # the executable built, started, and was then thrown away on
+        # upload for the name it had been given.
+        id: naming
+        shell: bash
+        run: echo "slug=$(echo '${{ github.ref_name }}' | tr '/:' '--')" >> "$GITHUB_OUTPUT"
+
       - uses: actions/upload-artifact@v4
         with:
-          name: Anonymiseur-windows-${{ github.ref_name }}
+          name: Anonymiseur-windows-${{ steps.naming.outputs.slug }}
           path: dist/Anonymiseur.exe
 
       - name: Attach to the release
