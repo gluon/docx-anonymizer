@@ -32,7 +32,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from . import engine, plaintext, workflow
+from . import engine, ocr, plaintext, workflow
+from . import case as case_module
 from .case import SUFFIX, Case, unused
 from .detect import Certainty
 from .engine import EmptyTable
@@ -902,12 +903,14 @@ class Window(QMainWindow):
         add_file.clicked.connect(self._case_add_file)
         add_text = QPushButton("Ajouter un texte collé")
         add_text.clicked.connect(self._case_show_paste)
+        add_scan = QPushButton("Ajouter une image scannée")
+        add_scan.clicked.connect(self._case_add_scan)
         self.case_add_text_button = QPushButton("Ajouter ce texte")
         self.case_add_text_button.setVisible(False)
         self.case_add_text_button.clicked.connect(self._case_add_text)
         drop = QPushButton("Retirer la pièce choisie")
         drop.clicked.connect(self._case_remove)
-        for button in (add_file, add_text, self.case_add_text_button, drop):
+        for button in (add_file, add_text, add_scan, self.case_add_text_button, drop):
             add_row.addWidget(button)
         add_row.addStretch()
         layout.addLayout(add_row)
@@ -937,8 +940,7 @@ class Window(QMainWindow):
         self.pieces_table.setRowCount(len(pieces))
         for index, piece in enumerate(pieces):
             self.pieces_table.setItem(index, 0, _cell(piece.label, tip=piece.label))
-            self.pieces_table.setItem(
-                index, 1, _cell("Document Word" if piece.is_file else "Texte collé"))
+            self.pieces_table.setItem(index, 1, _cell(piece.nature))
         self.case_analyse.setEnabled(bool(pieces))
 
     def _case_add_file(self) -> None:
@@ -956,6 +958,44 @@ class Window(QMainWindow):
             _alert(self, QMessageBox.Warning, "Pièce non ajoutée", str(error))
             return
         self._refresh_pieces()
+
+    def _case_add_scan(self) -> None:
+        """Read a scan, and say plainly when this build cannot.
+
+        Checked before the file picker: offering to choose an image and
+        then saying that images cannot be read is the same mistake as
+        asking for a document before warning that a cycle will be lost.
+        """
+        if not ocr.available():
+            _alert(
+                self, QMessageBox.Information, "Lecture d'images non incluse",
+                "Cette version ne sait pas lire le texte d'une image. Vous "
+                "pouvez copier le texte à la main et l'ajouter comme texte collé.",
+            )
+            return
+        chosen, _ = QFileDialog.getOpenFileName(
+            self, "Ajouter une image au dossier", str(self.workspace),
+            "Images (*.png *.jpg *.jpeg *.tif *.tiff *.bmp *.webp)",
+        )
+        if not chosen:
+            return
+        self.workspace = Path(chosen).parent
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            piece = self.case.add_scan(Path(chosen))
+        except Exception as error:  # noqa: BLE001 - shown to the user as is
+            _alert(self, QMessageBox.Warning, "Image non ajoutée", str(error))
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+        self._refresh_pieces()
+        _alert(
+            self, QMessageBox.Information, "Image lue",
+            f"{len(piece.text.split())} mot(s) lus dans « {piece.label} ».\n\n"
+            "Le texte vient d'une machine : un nom mal lu ne serait pas "
+            "repéré. Vous devrez le relire avant de produire la version "
+            "anonyme, l'écran de relecture est là pour ça.",
+        )
 
     def _case_show_paste(self) -> None:
         self.case_paste.setVisible(True)
@@ -1076,12 +1116,7 @@ class Window(QMainWindow):
                     "Ouvrir le dossier" if outcome.written else "Copier")
                 action.clicked.connect(lambda _=False, o=outcome: self._case_take(o))
                 self.case_results_table.setCellWidget(index, 2, action)
-        self.case_refusals.setText(
-            "" if not refused else
-            "Rien n'a été écrit pour les pièces refusées : une valeur réelle y "
-            "survivait au masquage. Revenez à la grille et vérifiez les "
-            "pseudonymes concernés."
-        )
+        self.case_refusals.setText(case_module.why_refused(refused))
         self.stack.setCurrentIndex(CASE_RESULTS)
 
     def _case_take(self, outcome) -> None:
@@ -1146,6 +1181,11 @@ class Window(QMainWindow):
         self.reader_row.setVisible(False)
         layout.addWidget(self.reader_row)
 
+        self.scanned_label = QLabel()
+        self.scanned_label.setWordWrap(True)
+        self.scanned_label.setStyleSheet("color: #8a6d00; font-weight: 600;")
+        layout.addWidget(self.scanned_label)
+
         self.reader_area = QTextEdit()
         self.reader_area.setReadOnly(True)
         self.reader_area.setTabChangesFocus(True)
@@ -1189,6 +1229,16 @@ class Window(QMainWindow):
         self.reader_heading.setText(f"Relire — {piece.label}")
         if self.reader_area.toPlainText() != piece.text:
             self.reader_area.setPlainText(piece.text)
+        # Shown, this piece counts as read. The rule is that a scan
+        # cannot go out unseen, and this screen is where it is seen;
+        # asking for a second confirmation after that would be a button
+        # that gets clicked without being read.
+        piece.reviewed = True
+        self.scanned_label.setText(
+            "" if not piece.doubtful else
+            "Lignes dont la machine n'est pas sûre : "
+            + " · ".join(piece.doubtful[:4])
+        )
         self._highlight()
 
     def _highlight(self) -> None:

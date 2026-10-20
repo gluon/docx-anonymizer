@@ -30,6 +30,8 @@ class NetworkGuard:
     attempts: list[str] = field(default_factory=list)
     loopback: list[str] = field(default_factory=list)
     installed: bool = False
+    #: The real socket methods, kept so a test can put them back.
+    _restore: tuple | None = None
 
     @property
     def clean(self) -> bool:
@@ -62,7 +64,23 @@ class NetworkGuard:
         socket.socket.connect = blocked
         socket.socket.connect_ex = blocked_ex
         guard.installed = True
+        guard._restore = (original, original_ex)
         return guard
+
+    def uninstall(self) -> None:
+        """Put the real socket back.
+
+        The program never calls this: the guard is installed for the
+        life of the window. A test does, having installed a guard of its
+        own to prove that some dependency opens nothing, and a test that
+        left the patch in place would hand its replacement to every test
+        that followed.
+        """
+        if self._restore is None:
+            return
+        socket.socket.connect, socket.socket.connect_ex = self._restore
+        self._restore = None
+        self.installed = False
 
 
 def _host_of(address) -> object:

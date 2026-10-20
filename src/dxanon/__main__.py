@@ -49,8 +49,17 @@ def self_check() -> int:
         say("ÉCHEC : le garde-fou réseau n'est pas installé", error=True)
         return 1
 
+    # Whether the recognition engine made it into the bundle. Not a
+    # failure if it did not: the build without it is a working program.
+    # But a one-file bundle that silently drops a package it was given
+    # is exactly what this check exists to catch, and that failure would
+    # otherwise surface as "cette version ne sait pas lire les images"
+    # on the machine of someone who was told it could.
+    from . import ocr
+
     say(f"OK : {len(grid.rows)} élément(s) détecté(s), aller-retour exact, "
-        f"garde-fou réseau actif, {len(missing)} pseudonyme(s) non restitué(s)")
+        f"garde-fou réseau actif, {len(missing)} pseudonyme(s) non restitué(s), "
+        f"lecture d'images {'incluse' if ocr.available() else 'absente'}")
     return 0
 
 
