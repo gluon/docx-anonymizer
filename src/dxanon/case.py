@@ -25,7 +25,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import engine, plaintext, source, workflow
+from . import engine, ocr, plaintext, source, workflow
 from .engine import RefusedExport, _occurs, refuse_empty
 from .mapping import Entry, Mapping
 from .workflow import Grid
@@ -61,10 +61,34 @@ class Piece:
     #: would be refused for the names it never contained.
     used: set[str] = field(default_factory=set)
     masked: Path | None = None
+    #: Read from an image rather than typed. The text is then a machine's
+    #: reading of a scan, and a misread name matches no rule, enters no
+    #: row and would go out in clear, which nothing downstream can catch.
+    scanned: bool = False
+    #: Whether a person has looked at the text on the reading screen.
+    #: Required before a scanned piece can be exported, and meaningless
+    #: for the others, which nobody needs to proof-read.
+    reviewed: bool = False
+    #: What the engine was unsure of, for the reading screen to show.
+    doubtful: list[str] = field(default_factory=list)
 
     @property
     def is_file(self) -> bool:
         return self.path is not None
+
+    @property
+    def blocked(self) -> str:
+        """Why this piece cannot be exported yet, or an empty string."""
+        if self.scanned and not self.reviewed:
+            return "texte issu d'une image, pas encore relu"
+        return ""
+
+    @property
+    def nature(self) -> str:
+        """What this piece is, in the words the window shows."""
+        if not self.scanned:
+            return "Document Word" if self.is_file else "Texte collé"
+        return "Image relue" if self.reviewed else "Image, à relire"
 
 
 @dataclass
@@ -77,6 +101,11 @@ class Outcome:
     refused: list[str] = field(default_factory=list)
     unresolved: list[str] = field(default_factory=list)
     used: set[str] = field(default_factory=set)
+    #: Nothing was attempted: a step is missing, rather than a value
+    #: having survived the masking. The two read the same in a list and
+    #: call for opposite things, so they are told apart here and not by
+    #: matching words in the window.
+    waiting: bool = False
 
     @property
     def ok(self) -> bool:
@@ -124,6 +153,30 @@ class Case:
 
     def add_text(self, label: str, text: str) -> Piece:
         piece = Piece(label=label, text=text)
+        self.pieces.append(piece)
+        return piece
+
+    def add_scan(self, path) -> Piece:
+        """Read an image and add what it said as a piece of the case.
+
+        The image is not kept as the piece's file: the piece is the
+        text. Nothing downstream then has to know that a scan was
+        involved, except the one rule that does, which is that a person
+        must read it before it goes out.
+        """
+        path = Path(path)
+        if any(p.label == path.name for p in self.pieces):
+            raise ValueError(f"« {path.name} » est déjà une pièce de ce dossier.")
+        reading = ocr.read(path)
+        if not reading.text.strip():
+            raise ValueError(
+                f"rien n'a pu être lu dans « {path.name} ». Une page blanche, "
+                "une écriture manuscrite ou un scan trop pâle se lisent mal."
+            )
+        piece = Piece(
+            label=path.name, text=reading.text, scanned=True,
+            doubtful=reading.doubtful,
+        )
         self.pieces.append(piece)
         return piece
 
@@ -202,6 +255,14 @@ class Case:
 
         for piece in self.pieces:
             outcome = Outcome(label=piece.label)
+            if piece.blocked:
+                # Not a refusal over a surviving name: a step nobody
+                # took. Reported in the same place, because the question
+                # on screen is the same one, namely which pieces are
+                # ready.
+                outcome.refused, outcome.waiting = [piece.blocked], True
+                outcomes.append(outcome)
+                continue
             try:
                 if piece.is_file:
                     destination = (folder or piece.path.parent) / _masked_name(piece.path, table)
@@ -383,6 +444,25 @@ class Case:
                 continue
             piece.text, piece.images, piece.identities = source.read_document(piece.path)
         return missing
+
+
+def why_refused(outcomes: list[Outcome]) -> str:
+    """One sentence for the pieces that produced nothing.
+
+    Two reasons read the same in a list and call for opposite things: a
+    value that survived the masking sends the reader back to the grid, a
+    piece that was never proof-read sends them to the reading screen.
+    """
+    refused = [outcome for outcome in outcomes if not outcome.ok]
+    if not refused:
+        return ""
+    if any(outcome.waiting for outcome in refused):
+        return ("Une pièce lue dans une image doit passer par « Relire le texte » "
+                "avant de sortir : un nom mal lu par la machine ne serait repéré "
+                "par personne.")
+    return ("Rien n'a été écrit pour les pièces refusées : une valeur réelle y "
+            "survivait au masquage. Revenez à la grille et vérifiez les "
+            "pseudonymes concernés.")
 
 
 def unused(path: Path) -> Path:

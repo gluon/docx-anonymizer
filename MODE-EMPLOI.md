@@ -121,11 +121,34 @@ temporaire, aucun historique. Le bandeau en haut de la fenêtre le dit à
 chaque instant et compte les tentatives de connexion, qui doivent rester
 à zéro.
 
+## Une pièce scannée
+
+« Ajouter une image scannée » depuis l'écran du dossier. Le texte de
+l'image est lu sur cet ordinateur, et il devient une pièce de texte du
+dossier. L'image elle-même ne part jamais : c'est le texte, masqué, qui
+est soumis.
+
+Deux choses à savoir, et elles comptent plus que la fonction :
+
+**Le texte vient d'une machine.** Un nom mal lu, `DUPONT` devenu
+`DUPQNT`, ne ressemble à rien que le logiciel sache reconnaître. Il
+n'apparaîtra pas dans la grille et sortirait en clair.
+
+**C'est pourquoi la relecture est obligatoire.** Une pièce lue dans une
+image ne peut pas être produite avant d'être passée par « Relire le
+texte ». Tant qu'elle ne l'est pas, la liste des résultats la signale
+comme en attente et n'écrit rien pour elle. L'écran de relecture affiche
+aussi les lignes dont la machine n'est pas sûre : c'est là qu'un nom mal
+lu se cache.
+
+Une écriture manuscrite, un scan trop pâle ou une page blanche ne se
+lisent pas, et la fenêtre le dit plutôt que d'ajouter une pièce vide.
+
 ## Ce que le logiciel ne fait pas
 
-Il ne lit pas les images ni les pièces scannées. Si un document contient
-une image, la fenêtre le signale : l'image sort telle quelle, et ce qui
-est écrit dessus n'est pas masqué.
+Il ne lit pas les PDF. Une pièce scannée au format PDF doit d'abord être
+exportée en image par le logiciel qui l'a produite.
 
-Il ne connaît pas la notion de dossier : chaque document, chaque mail est
-un cycle indépendant, avec ses propres pseudonymes.
+Si un document Word contient une image, la fenêtre le signale : l'image
+sort telle quelle, et ce qui est écrit dessus n'est pas masqué. Pour le
+masquer, ajoutez l'image comme pièce scannée.

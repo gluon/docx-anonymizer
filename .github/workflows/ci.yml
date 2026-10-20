@@ -19,7 +19,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e .
+      - run: pip install -e .[ocr]
       - name: Tests
         # Bounded: a test that waits on something nobody answers used to
         # hold the job until its own six-hour limit, and the log of a
@@ -48,7 +48,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e . PySide6
+      - run: pip install -e .[ocr] PySide6
       - name: Tests
         # The Qt tests run here and nowhere else, so this is where a
         # window waiting on a modal box hangs. Ten minutes against a
@@ -103,7 +103,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e . PySide6 pyinstaller
+      - run: pip install -e .[ocr] PySide6 pyinstaller
       - name: Build the executable
         run: >
           pyinstaller --noconfirm --onefile --windowed
@@ -111,6 +111,8 @@ jobs:
           --paths src
           --collect-submodules dxanon
           --hidden-import lxml._elementpath
+          --collect-all rapidocr_onnxruntime
+          --collect-all onnxruntime
           anonymiseur.py
 
       - name: Check the executable starts
@@ -132,9 +134,49 @@ jobs:
           }
           if ($p.ExitCode -ne 0) { throw "the executable exited with $($p.ExitCode)" }
 
+      - name: Check the engine made it into the bundle
+        # This job installs the recognition engine on purpose, so a
+        # bundle without it is a bundle that dropped a package in
+        # silence, which is the failure one-file builds are good at and
+        # which would otherwise reach the user as "cette version ne sait
+        # pas lire les images".
+        timeout-minutes: 3
+        run: |
+          # Through Start-Process, like the step above. This shell runs
+          # with $ErrorActionPreference = Stop, so a native command that
+          # exits non-zero ends the step then and there, before any line
+          # that would have said why: two runs reported nothing but
+          # "exit code 1".
+          #
+          # And --report, not a shell redirection: a --windowed build has
+          # no standard output to redirect, so the file came out empty
+          # and this check reported a bundle with no engine when the
+          # question had never been asked.
+          $p = Start-Process -FilePath dist\Anonymiseur.exe `
+            -ArgumentList '--self-check','--report','check.log' -PassThru
+          if (-not $p.WaitForExit(120000)) { $p.Kill(); throw "the self-check did not finish" }
+          $written = Test-Path check.log
+          Write-Host "::warning::self-check exit=$($p.ExitCode) report=$written"
+          if ($written) {
+            Get-Content check.log | ForEach-Object { Write-Host "::warning::$_" }
+          }
+          if ($p.ExitCode -ne 0) { throw "the self-check failed with $($p.ExitCode)" }
+          if (-not $written) { throw "the self-check wrote no report" }
+          if (-not (Select-String -Path check.log -Pattern "lecture d'images incluse" -Quiet)) {
+            throw "the bundle has no recognition engine"
+          }
+
+      - name: A name an artifact is allowed to have
+        # A branch name carries a slash and an artifact name may not:
+        # the executable built, started, and was then thrown away on
+        # upload for the name it had been given.
+        id: naming
+        shell: bash
+        run: echo "slug=$(echo '${{ github.ref_name }}' | tr '/:' '--')" >> "$GITHUB_OUTPUT"
+
       - uses: actions/upload-artifact@v4
         with:
-          name: Anonymiseur-windows-${{ github.ref_name }}
+          name: Anonymiseur-windows-${{ steps.naming.outputs.slug }}
           path: dist/Anonymiseur.exe
 
       - name: Attach to the release

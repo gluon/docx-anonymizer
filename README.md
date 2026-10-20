@@ -249,6 +249,34 @@ The mapping file holds exactly what the exercise is meant to protect. It
 never travels inside an exported document, and it is treated like the
 rest of the case file.
 
+## Reading a scan
+
+A case file is half paper, and a scan carries names nothing else here can
+see: every rule in this program reads characters, and an image has none.
+
+A scanned piece becomes a **text** piece of the case. The text is read on
+this machine, checked by the person who knows the file, masked like any
+other text, and it is the masked text that is submitted. The scan itself
+goes nowhere. Black rectangles over an image was the other option and it
+is worse twice over: it needs a canvas and a steady hand, and a model
+reads a redacted scan badly, which was the whole reason for sending text.
+
+This is the one thing here that creates a leak the program does not
+otherwise have. `DUPONT` misread as `DUPQNT` matches no rule, enters no
+row, and would go out in clear; the refusal check cannot see it either,
+since it only looks for what the table holds. So a piece read from an
+image cannot be exported until somebody has looked at the text, and the
+engine's own doubtful lines are shown on that screen, longest first,
+since a line it is unsure of is where a misread name hides.
+
+Offline is asserted rather than assumed: a test installs the network
+guard, runs a recognition through it, and fails if anything tried to
+leave. The engine is an optional dependency, it and its runtime weigh
+more than everything else here put together, and `--self-check` reports
+whether the bundle has it: a one-file build that silently drops a package
+is exactly the failure that check exists to catch. The executable is
+55 MB without it and 149 MB with it.
+
 ## What is not verified
 
 **The window.** `tests/test_gui_qt.py` builds it on Qt's offscreen
