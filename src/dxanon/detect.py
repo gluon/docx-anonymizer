@@ -361,6 +361,7 @@ OCCUPATIONS = frozenset(
     Établissement Industrie Industries Industriel Industrielle
     Dommages-interets Dommages-intérêts Interets Intérêts Dommages
     Pole Pôle CPC CPH Climat Cadence Cadences Preuve Preuves Charge
+    Ressources Humaines Humaine Service Services Personnel
     """.split()
 )
 
