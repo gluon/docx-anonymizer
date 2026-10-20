@@ -41,6 +41,41 @@ page, tableaux, révisions suivies, commentaires. Les noms cachés dans
 les propriétés du fichier, l'auteur des commentaires et celui des
 révisions sont masqués aussi.
 
+## Un dossier, plusieurs pièces
+
+Pour traiter plusieurs pièces d'une même affaire ensemble, « Un dossier,
+plusieurs pièces » sur l'écran d'accueil, puis « Ajouter un document
+Word » et « Ajouter un texte collé » autant de fois que nécessaire, puis
+« Analyser le dossier ».
+
+L'intérêt est là : un même nom reçoit le même pseudonyme dans toutes les
+pièces. Les conclusions et les mails parlent de la même personne, et
+l'IA peut suivre un raisonnement d'une pièce à l'autre.
+
+« Produire les pièces anonymes » demande une fois où écrire, puis affiche
+la liste de ce qui a été produit, avec « Copier » ou « Ouvrir le
+dossier » pour chaque pièce. Une pièce refusée n'empêche pas les autres.
+
+« Enregistrer la table du dossier » écrit un fichier qui permet de
+reprendre le dossier plus tard, pour y ajouter une pièce ou pour
+restituer les vrais noms d'un document déjà envoyé. Ce fichier contient
+les vrais noms : il reste sur cet ordinateur, à sa place dans le dossier
+de l'affaire, et ne se transmet pas.
+
+## Masquer soi-même ce que l'outil n'a pas vu
+
+Depuis la grille, « Relire le texte » montre le texte avec en jaune ce
+qui sera remplacé. Sélectionnez ce qui doit l'être aussi, puis Ctrl+M ou
+« Masquer la sélection ».
+
+À utiliser pour ce qu'aucune règle ne peut deviner : un surnom, un poste
+qui ne désigne qu'une personne dans une petite entreprise, le numéro
+d'une machine, une date qui ne parle qu'aux parties. Ce qui a la forme
+d'un nom reçoit un nom, le reste reçoit un jeton entre crochets.
+
+C'est aussi le seul écran qui répond à « qu'est-ce qui va sortir
+exactement », ce qu'aucun tableau ne dit.
+
 ## Lire la grille
 
 Une ligne par valeur trouvée, avec la raison pour laquelle elle a été

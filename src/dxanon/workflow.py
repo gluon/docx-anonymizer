@@ -327,6 +327,96 @@ def _email_links(rows: list[Row]) -> list[tuple[str, ...]]:
     return links
 
 
+def add_by_hand(grid: Grid, value: str, text: str = "") -> Row:
+    """Mask something the detection never offered.
+
+    Over-detection is exhaustive for capitalised names and nothing else:
+    a nickname, a job title that identifies one person in a small firm, a
+    machine number, a date that only means something to the parties. The
+    user sees those and the program never will, so the grid has to take
+    them.
+
+    Certain by construction. Someone selected it on purpose; there is
+    nothing left to confirm.
+
+    A value that shares a word with a subject already in the grid joins
+    it and is rendered from the same invented name, which is the whole
+    reason this cannot be a separate little table on the side: "Lenoir"
+    added by hand next to "Sophie LENOIR" has to come out as the same
+    woman, not as a second one.
+    """
+    value = value.strip()
+    if not value:
+        raise ValueError("rien à masquer")
+
+    existing = next((row for row in grid.rows if row.value == value), None)
+    if existing is not None:
+        existing.decision = Decision.REPLACE
+        return existing
+
+    row = Row(
+        value=value, certainty=Certainty.CERTAIN, why="choisi à la main",
+        occurrences=text.count(value), decision=Decision.REPLACE,
+        kind="name" if _looks_like_a_name(value) else "reference",
+    )
+    taken = {r.pseudonym for r in grid.rows if r.pseudonym}
+    taken |= {word for r in grid.rows if r.pseudonym for word in r.pseudonym.split()}
+
+    # Not everything worth masking is a name. "ligne 4" was handed
+    # "olivier Forestier", and the masked text read "sur la olivier
+    # Forestier": a placeholder cannot be mistaken for prose, and prose
+    # that reads as nonsense is prose the reader stops trusting.
+    if not row.is_person_like:
+        row.pseudonym = _mask_identifier(value, _counters_in(grid))
+        grid.rows.append(row)
+        return row
+
+    tokens = _tokens(value)
+    siblings = [r for r in grid.rows
+                if r.pseudonym and r.is_person_like and _tokens(r.value) & tokens]
+    if siblings:
+        spine = max(siblings, key=lambda r: len(_tokens(r.value)))
+        row.group = spine.group or spine.value
+        row.pseudonym = _render_like(spine.pseudonym.split(), spine.value, value)
+    else:
+        kind = _kind_from_context(value, text) or "name"
+        base = _base_for(value, kind, taken, text)
+        row.group = value
+        row.pseudonym = _unique(_render_like(base, value, value), taken)
+
+    grid.rows.append(row)
+    return row
+
+
+def _looks_like_a_name(value: str) -> bool:
+    """Whether a hand-picked value can carry an invented name.
+
+    Every word capitalised and no digit anywhere. Deliberately crude:
+    the cost of being wrong is a placeholder where a name would have
+    read better, and the cost the other way is a sentence that reads as
+    nonsense.
+    """
+    words = value.split()
+    return bool(words) and all(
+        word[:1].isupper() and not any(ch.isdigit() for ch in word) for word in words
+    )
+
+
+def _counters_in(grid: Grid) -> dict[str, int]:
+    """The placeholder numbers already in use, so the next one is free.
+
+    Two values sharing a placeholder cannot be told apart on the way
+    back: the document would come home with one of them in both places.
+    """
+    counters: dict[str, int] = {}
+    for row in grid.rows:
+        found = re.fullmatch(r"\[(.+) (\d+)\]", row.pseudonym or "")
+        if found:
+            label, number = found.group(1), int(found.group(2))
+            counters[label] = max(counters.get(label, 0), number)
+    return counters
+
+
 def _group_rows(rows: list[Row], links: list[frozenset[str]] | None = None) -> list[list[Row]]:
     """Put every spelling of one subject in one group.
 
@@ -390,7 +480,10 @@ _PLACE_BEFORE = re.compile(
     # name, and the masked pleading was addressed to "PRUD'HOMMES DE
     # DAMIEN".
     r"|\b(?:prud['’]hommes|pr[uû]d|cour\s+d['’]appel|tribunal[^.\n]{0,30}|"
-    r"conseil[^.\n]{0,30}|commune|ville|mairie|barreau)\s+(?:de\s+|du\s+|d['’]))$",
+    r"conseil[^.\n]{0,30}|commune|ville|mairie|barreau)\s+(?:de\s+|du\s+|d['’])"
+    # A place is also named after the word that says it is one, with no
+    # "de" between: "secteur Beaumont" was given a first name.
+    r"|\b(?:secteur|zone|site|quartier|r[ée]gion|d[ée]partement)\s+)$",
     re.IGNORECASE,
 )
 _ORG_BEFORE = re.compile(

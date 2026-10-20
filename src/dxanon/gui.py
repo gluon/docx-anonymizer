@@ -21,12 +21,15 @@ from PySide6.QtCore import QEvent, Qt, QUrl
 # was terminating the application, and a crash report shows a segfault in
 # exactly that lazy initialisation. Naming the type here creates it when
 # the module loads. _check_event_types proves it did.
-from PySide6.QtGui import QCloseEvent, QDesktopServices, QFont, QKeySequence, QShortcut
+from PySide6.QtGui import (
+    QCloseEvent, QColor, QDesktopServices, QFont, QKeySequence, QShortcut,
+    QTextCharFormat, QTextCursor,
+)
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QHeaderView,
     QLabel, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QSizePolicy,
-    QStackedWidget, QTableWidget, QTableWidgetItem, QTextBrowser, QVBoxLayout,
-    QWidget,
+    QStackedWidget, QTableWidget, QTableWidgetItem, QTextBrowser, QTextEdit,
+    QVBoxLayout, QWidget,
 )
 
 from . import engine, plaintext, workflow
@@ -43,6 +46,7 @@ from .workflow import Decision
 HELP = 4
 DOSSIER = 5
 CASE_RESULTS = 6
+READER = 7
 
 #: The one action of each screen, painted rather than left to the theme.
 #:
@@ -197,6 +201,7 @@ class Window(QMainWindow):
         self.stack.addWidget(self._build_help())
         self.stack.addWidget(self._build_dossier())
         self.stack.addWidget(self._build_case_results())
+        self.stack.addWidget(self._build_reader())
 
         self._build_status_bar()
 
@@ -488,6 +493,9 @@ class Window(QMainWindow):
         row = QHBoxLayout()
         back = QPushButton("Retour")
         back.clicked.connect(lambda: self.stack.setCurrentIndex(0))
+        reader = QPushButton("Relire le texte")
+        reader.clicked.connect(self._open_reader)
+        row.addWidget(reader)
         self.run_button = run = primary(QPushButton("Produire la version anonyme"))
         run.clicked.connect(self._run)
         row.addWidget(back)
@@ -1100,6 +1108,141 @@ class Window(QMainWindow):
             f"{self.case_file}\n\nCe fichier contient les vrais noms du dossier. "
             "Il ne doit pas être transmis, ni joint à un courriel, ni déposé "
             "dans un espace partagé.",
+        )
+
+    # ------------------------------------------------------------- relecture
+    def _build_reader(self) -> QWidget:
+        """The text, with what will be masked shown in it.
+
+        A grid says "DUPONT, 14 occurrences". It cannot say that the
+        nickname in the third paragraph, or the number of the machine
+        the client worked on, names him just as surely. Over-detection
+        is exhaustive for capitalised names and for nothing else, and
+        the one who can see the rest is the one reading.
+
+        So the text is on screen, highlighted where it will change, and
+        a selection can be added to the grid. It is also the only screen
+        that answers "what will actually go out", which no table can.
+        """
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(12)
+
+        self.reader_heading = QLabel()
+        self.reader_heading.setFont(QFont(self.font().family(), 15, QFont.Bold))
+        layout.addWidget(self.reader_heading)
+        self.reader_hint = QLabel("Sélectionnez ce qui doit être masqué, puis Ctrl+M.")
+        layout.addWidget(self.reader_hint)
+
+        self.reader_choice = QComboBox()
+        self.reader_choice.setAccessibleName("Pièce à relire")
+        self.reader_choice.currentIndexChanged.connect(self._reader_show_piece)
+        self.reader_row = QWidget()
+        row = QHBoxLayout(self.reader_row)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(QLabel("Pièce :"))
+        row.addWidget(self.reader_choice, stretch=1)
+        self.reader_row.setVisible(False)
+        layout.addWidget(self.reader_row)
+
+        self.reader_area = QTextEdit()
+        self.reader_area.setReadOnly(True)
+        self.reader_area.setTabChangesFocus(True)
+        self.reader_area.setAccessibleName("Texte relu")
+        layout.addWidget(self.reader_area, stretch=1)
+
+        bottom = QHBoxLayout()
+        back = QPushButton("Retour à la grille")
+        back.clicked.connect(lambda: self.stack.setCurrentIndex(1))
+        mask = primary(QPushButton("Masquer la sélection"))
+        mask.clicked.connect(self._mask_selection)
+        bottom.addWidget(back)
+        bottom.addStretch()
+        bottom.addWidget(mask)
+        layout.addLayout(bottom)
+
+        shortcut = QShortcut(QKeySequence("Ctrl+M"), page)
+        shortcut.setContext(Qt.WindowShortcut)
+        shortcut.activated.connect(self._mask_selection)
+        return page
+
+    def _open_reader(self) -> None:
+        pieces = self.case.pieces
+        if not pieces:
+            return
+        self.reader_row.setVisible(len(pieces) > 1)
+        self.reader_choice.blockSignals(True)
+        self.reader_choice.clear()
+        for piece in pieces:
+            self.reader_choice.addItem(piece.label, piece.label)
+        self.reader_choice.blockSignals(False)
+        self._reader_show_piece()
+        self.stack.setCurrentIndex(READER)
+
+    def _reader_piece(self):
+        label = self.reader_choice.currentData()
+        return next((p for p in self.case.pieces if p.label == label), self.case.pieces[0])
+
+    def _reader_show_piece(self) -> None:
+        piece = self._reader_piece()
+        self.reader_heading.setText(f"Relire — {piece.label}")
+        if self.reader_area.toPlainText() != piece.text:
+            self.reader_area.setPlainText(piece.text)
+        self._highlight()
+
+    def _highlight(self) -> None:
+        """Paint every value the grid will replace.
+
+        Painted as extra selections rather than written into the
+        document, so the text itself is never altered: what is on screen
+        is the piece, character for character, and the offsets a
+        selection reports are the piece's own.
+        """
+        assert self.grid is not None
+        marked = QTextCharFormat()
+        marked.setBackground(QColor("#ffe8a3"))
+        kept = QTextCharFormat()
+        kept.setBackground(QColor("#e4e6e9"))
+
+        text = self.reader_area.toPlainText()
+        selections = []
+        for row in self.grid.rows:
+            if not row.value:
+                continue
+            style = marked if row.decision is Decision.REPLACE else kept
+            start = text.find(row.value)
+            while start >= 0:
+                cursor = QTextCursor(self.reader_area.document())
+                cursor.setPosition(start)
+                cursor.setPosition(start + len(row.value), QTextCursor.KeepAnchor)
+                selection = QTextEdit.ExtraSelection()
+                selection.cursor = cursor
+                selection.format = style
+                selections.append(selection)
+                start = text.find(row.value, start + len(row.value))
+        self.reader_area.setExtraSelections(selections)
+        self.reader_hint.setText(
+            f"{len(selections)} passage(s) surlignés. Sélectionnez, puis Ctrl+M."
+        )
+
+    def _mask_selection(self) -> None:
+        if self.stack.currentIndex() != READER or self.grid is None:
+            return
+        chosen = self.reader_area.textCursor().selectedText().strip()
+        if not chosen:
+            _alert(self, QMessageBox.Information, "Rien n'est sélectionné",
+                   "Sélectionnez dans le texte ce qui doit être masqué.")
+            return
+        try:
+            row = workflow.add_by_hand(self.grid, chosen, self._reader_piece().text)
+        except ValueError as error:
+            _alert(self, QMessageBox.Information, "Rien à masquer", str(error))
+            return
+        self._fill_table()
+        self._highlight()
+        self.reader_hint.setText(
+            f"« {row.value} » sera remplacé par « {row.pseudonym} »."
         )
 
     # -------------------------------------------------------------- reset

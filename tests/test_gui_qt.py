@@ -30,7 +30,7 @@ except ImportError:  # pragma: no cover - environment without Qt
 
 SAMPLE = Path(__file__).with_name("sample_mail.txt").read_text(encoding="utf-8")
 
-HOME, GRID, RESULT, RETURN, HELP, DOSSIER, CASE_RESULTS = range(7)
+HOME, GRID, RESULT, RETURN, HELP, DOSSIER, CASE_RESULTS, READER = range(8)
 
 
 
@@ -736,6 +736,93 @@ class WindowTests(unittest.TestCase):
             QTimer.singleShot(0, _dismiss)
             self.click("Enregistrer la table du dossier")
         self.assertTrue(self.window.close())
+
+
+    # ----------------------------------------------------------- relecture
+    def _to_reader(self) -> None:
+        self.to_grid()
+        self.click("Relire le texte")
+        self.assertEqual(self.at(), READER)
+
+    def select(self, needle: str) -> None:
+        """Select ``needle`` in the reading area, as a mouse would."""
+        from PySide6.QtGui import QTextCursor
+
+        text = self.window.reader_area.toPlainText()
+        start = text.find(needle)
+        self.assertGreaterEqual(start, 0, f"{needle!r} is not in the text on screen")
+        cursor = self.window.reader_area.textCursor()
+        cursor.setPosition(start)
+        cursor.setPosition(start + len(needle), QTextCursor.KeepAnchor)
+        self.window.reader_area.setTextCursor(cursor)
+
+    def test_the_reader_shows_the_text_unchanged(self):
+        self._to_reader()
+        self.assertEqual(self.window.reader_area.toPlainText(), SAMPLE[:1500].strip())
+
+    def test_what_will_be_masked_is_highlighted(self):
+        self._to_reader()
+        self.assertGreater(len(self.window.reader_area.extraSelections()), 0)
+
+    def test_a_selection_enters_the_grid_and_is_masked(self):
+        self._to_reader()
+        before = self.window.table.rowCount()
+        self.select("conducteur routier")
+        self.click("Masquer la sélection")
+        self.assertEqual(self.window.table.rowCount(), before + 1)
+
+        added = next(r for r in self.window.grid.rows if r.value == "conducteur routier")
+        self.assertTrue(added.pseudonym)
+        self.click("Retour à la grille")
+        self.click("Produire la version anonyme")
+        self.assertNotIn("conducteur routier", self.window.result_area.toPlainText())
+
+    def test_a_hand_picked_value_comes_back(self):
+        self._to_reader()
+        self.select("conducteur routier")
+        self.click("Masquer la sélection")
+        self.click("Retour à la grille")
+        self.click("Produire la version anonyme")
+        masked = self.window.result_area.toPlainText()
+        self.click("J'ai la réponse de l'IA, remettre les vrais noms")
+        self.window.return_area.setPlainText(masked)
+        self.click("Remettre les vrais noms")
+        self.assertEqual(self.window.result_area.toPlainText(), SAMPLE[:1500].strip())
+
+    def test_masking_nothing_says_so(self):
+        self._to_reader()
+        self.answer_next_dialog()
+        self.click("Masquer la sélection")
+        self.assertTrue(any("sélection" in text for text in self.seen_dialogs),
+                        self.seen_dialogs)
+
+    def test_a_value_already_in_the_grid_is_not_added_twice(self):
+        self._to_reader()
+        value = next(r.value for r in self.window.grid.rows
+                     if r.value in self.window.reader_area.toPlainText())
+        before = self.window.table.rowCount()
+        self.select(value)
+        self.click("Masquer la sélection")
+        self.assertEqual(self.window.table.rowCount(), before)
+
+    def test_something_that_is_not_a_name_gets_a_placeholder(self):
+        """"ligne 4" was handed a first name: "sur la olivier Forestier"."""
+        self._to_reader()
+        self.select("coefficient 150M")
+        self.click("Masquer la sélection")
+        added = next(r for r in self.window.grid.rows if r.value == "coefficient 150M")
+        self.assertTrue(added.pseudonym.startswith("["), added.pseudonym)
+
+    def test_the_reader_offers_each_piece_of_a_case(self):
+        import tempfile
+
+        self._case_of_two(Path(tempfile.mkdtemp()))
+        self.click("Relire le texte")
+        self.assertEqual(self.at(), READER)
+        self.assertTrue(self.window.reader_row.isVisible())
+        self.assertEqual(self.window.reader_choice.count(), 2)
+        self.window.reader_choice.setCurrentIndex(1)
+        self.assertIn("Jean Dupont", self.window.reader_area.toPlainText())
 
 
 class StartupTypeCheck(unittest.TestCase):
