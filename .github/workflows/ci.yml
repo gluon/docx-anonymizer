@@ -84,8 +84,12 @@ jobs:
           QT_QPA_PLATFORM: offscreen
 
   build:
-    # The executable is only worth building for a release.
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Built for a release, and on demand for a branch. A branch cannot be
+    # tested on Windows without an executable, and tagging one just to
+    # get a file would put a half-finished version in the releases next
+    # to the one people install. Dispatched, the executable is an
+    # artifact of the run and nothing else.
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' 
     needs: windows
     runs-on: windows-latest
     # Creating the release writes to the repository, and the default
@@ -130,7 +134,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Anonymiseur-windows
+          name: Anonymiseur-windows-${{ github.ref_name }}
           path: dist/Anonymiseur.exe
 
       - name: Attach to the release
@@ -138,3 +142,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/Anonymiseur.exe
+          # A tag carrying a hyphen is a trial version, and says so on
+          # the releases page rather than looking like the one to
+          # install.
+          prerelease: ${{ contains(github.ref_name, '-') }}
