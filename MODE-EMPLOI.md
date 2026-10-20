@@ -144,10 +144,20 @@ lu se cache.
 Une écriture manuscrite, un scan trop pâle ou une page blanche ne se
 lisent pas, et la fenêtre le dit plutôt que d'ajouter une pièce vide.
 
-## Ce que le logiciel ne fait pas
+## Un PDF
 
-Il ne lit pas les PDF. Une pièce scannée au format PDF doit d'abord être
-exportée en image par le logiciel qui l'a produite.
+« Ajouter un PDF » depuis l'écran du dossier. Un PDF est deux documents
+différents sous la même icône, et la fenêtre dit lequel vous venez
+d'ajouter.
+
+Si ses pages portent leur texte, ce qui est le cas d'un courrier exporté
+depuis un traitement de texte, la lecture est exacte, comme pour un
+document Word, et rien n'est à relire.
+
+Si une page est une image, elle est reconnue par une machine, et cette
+pièce passe par la relecture obligatoire comme n'importe quelle image.
+
+## Ce que le logiciel ne fait pas
 
 Si un document Word contient une image, la fenêtre le signale : l'image
 sort telle quelle, et ce qui est écrit dessus n'est pas masqué. Pour le

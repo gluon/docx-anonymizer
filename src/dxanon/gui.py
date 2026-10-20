@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from . import engine, ocr, plaintext, workflow
+from . import engine, ocr, pdf, plaintext, workflow
 from . import case as case_module
 from .case import SUFFIX, Case, unused
 from .detect import Certainty
@@ -904,13 +904,16 @@ class Window(QMainWindow):
         add_text = QPushButton("Ajouter un texte collé")
         add_text.clicked.connect(self._case_show_paste)
         add_scan = QPushButton("Ajouter une image scannée")
-        add_scan.clicked.connect(self._case_add_scan)
+        add_scan.clicked.connect(lambda: self._case_add_read("image"))
+        add_pdf = QPushButton("Ajouter un PDF")
+        add_pdf.clicked.connect(lambda: self._case_add_read("pdf"))
         self.case_add_text_button = QPushButton("Ajouter ce texte")
         self.case_add_text_button.setVisible(False)
         self.case_add_text_button.clicked.connect(self._case_add_text)
         drop = QPushButton("Retirer la pièce choisie")
         drop.clicked.connect(self._case_remove)
-        for button in (add_file, add_text, add_scan, self.case_add_text_button, drop):
+        for button in (add_file, add_text, add_scan, add_pdf,
+                       self.case_add_text_button, drop):
             add_row.addWidget(button)
         add_row.addStretch()
         layout.addLayout(add_row)
@@ -959,43 +962,53 @@ class Window(QMainWindow):
             return
         self._refresh_pieces()
 
-    def _case_add_scan(self) -> None:
-        """Read a scan, and say plainly when this build cannot.
+    #: What each kind of piece needs before it can be read: the module
+    #: that does the reading, what the file picker offers, and the
+    #: method of the case that adds it.
+    READERS = {
+        "image": (ocr, "Ajouter une image au dossier",
+                  "Images (*.png *.jpg *.jpeg *.tif *.tiff *.bmp *.webp)",
+                  "Lecture d'images non incluse", "Image"),
+        "pdf": (pdf, "Ajouter un PDF au dossier", "PDF (*.pdf)",
+                "Lecture de PDF non incluse", "PDF"),
+    }
 
-        Checked before the file picker: offering to choose an image and
-        then saying that images cannot be read is the same mistake as
-        asking for a document before warning that a cycle will be lost.
+    def _case_add_read(self, kind: str) -> None:
+        """Add a piece a machine has to read first: an image or a PDF.
+
+        One path for both, because they differ only in the library that
+        reads them and the words on the dialogs. Written twice, each
+        half had its own availability check, its own picker and its own
+        message, in the one layer this machine cannot run.
+
+        Availability is checked before the file picker: offering to
+        choose a file and then saying that this build cannot read it is
+        the same mistake as asking for a document before warning that a
+        cycle will be lost.
         """
-        if not ocr.available():
+        reader, title, filters, missing, noun = self.READERS[kind]
+        if not reader.available():
             _alert(
-                self, QMessageBox.Information, "Lecture d'images non incluse",
-                "Cette version ne sait pas lire le texte d'une image. Vous "
-                "pouvez copier le texte à la main et l'ajouter comme texte collé.",
+                self, QMessageBox.Information, missing,
+                "Vous pouvez copier le texte à la main et l'ajouter comme "
+                "texte collé.",
             )
             return
-        chosen, _ = QFileDialog.getOpenFileName(
-            self, "Ajouter une image au dossier", str(self.workspace),
-            "Images (*.png *.jpg *.jpeg *.tif *.tiff *.bmp *.webp)",
-        )
+        chosen, _ = QFileDialog.getOpenFileName(self, title, str(self.workspace), filters)
         if not chosen:
             return
         self.workspace = Path(chosen).parent
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            piece = self.case.add_scan(Path(chosen))
+            add = self.case.add_scan if kind == "image" else self.case.add_pdf
+            piece = add(Path(chosen))
         except Exception as error:  # noqa: BLE001 - shown to the user as is
-            _alert(self, QMessageBox.Warning, "Image non ajoutée", str(error))
+            _alert(self, QMessageBox.Warning, f"{noun} non ajouté", str(error))
             return
         finally:
             QApplication.restoreOverrideCursor()
         self._refresh_pieces()
-        _alert(
-            self, QMessageBox.Information, "Image lue",
-            f"{len(piece.text.split())} mot(s) lus dans « {piece.label} ».\n\n"
-            "Le texte vient d'une machine : un nom mal lu ne serait pas "
-            "repéré. Vous devrez le relire avant de produire la version "
-            "anonyme, l'écran de relecture est là pour ça.",
-        )
+        _alert(self, QMessageBox.Information, f"{noun} lu", piece.reading_note)
 
     def _case_show_paste(self) -> None:
         self.case_paste.setVisible(True)

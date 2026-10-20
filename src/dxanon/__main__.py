@@ -67,12 +67,14 @@ def self_check() -> int:
     # is exactly what this check exists to catch, and that failure would
     # otherwise surface as "cette version ne sait pas lire les images"
     # on the machine of someone who was told it could.
-    from . import ocr
+    from . import ocr, pdf
 
-    trouble = ocr.diagnosis()
+    images = ocr.diagnosis()
+    documents = pdf.diagnosis()
     say(f"OK : {len(grid.rows)} élément(s) détecté(s), aller-retour exact, "
         f"garde-fou réseau actif, {len(missing)} pseudonyme(s) non restitué(s), "
-        f"lecture d'images {'incluse' if not trouble else 'absente : ' + trouble}")
+        f"lecture d'images {'incluse' if not images else 'absente : ' + images}, "
+        f"lecture de PDF {'incluse' if not documents else 'absente : ' + documents}")
     return 0
 
 
