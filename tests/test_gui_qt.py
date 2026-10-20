@@ -10,6 +10,7 @@ Skipped where PySide6 is not installed.
 
 from __future__ import annotations
 
+import faulthandler
 import os
 import sys
 import time
@@ -79,6 +80,14 @@ class WindowTests(unittest.TestCase):
         self._watchdog.setInterval(300)
         self._watchdog.timeout.connect(self._close_stray)
         self._watchdog.start()
+        # And a hard stop behind it. The watchdog only sees a modal
+        # QMessageBox; anything else that waits forever, a native dialog
+        # that was not stubbed or an event loop with nothing to deliver,
+        # held the Windows job until its step was killed at ten minutes,
+        # which runs no reporting code and leaves a red cross with no
+        # reason. This dumps every thread's stack and ends the process,
+        # so the log names the test and the line it was waiting on.
+        faulthandler.dump_traceback_later(60, exit=True)
 
     def _close_stray(self) -> None:
         box = QApplication.activeModalWidget()
@@ -96,6 +105,7 @@ class WindowTests(unittest.TestCase):
             self._stray_since = None
 
     def tearDown(self):
+        faulthandler.cancel_dump_traceback_later()
         self._watchdog.stop()
         self.alive = False  # a handler still waiting must not answer the next test
         # Let it close without asking. The window asks when names are
